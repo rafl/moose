@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 80;
+use Test::More tests => 83;
 use Test::Exception;
 
 BEGIN {
@@ -40,6 +40,8 @@ BEGIN {
     has 'blang' => (is => 'ro', isa => 'Thing', handles => ['goodbye']);         
     
     has 'bunch_of_stuff' => (is => 'rw', isa => 'ArrayRef');
+
+    has 'one_last_one' => (is => 'rw', isa => 'Ref');   
     
     # this one will work here ....
     has 'fail' => (isa => 'CodeRef');
@@ -47,6 +49,7 @@ BEGIN {
     
     package Bar;
     use Moose;
+    use Moose::Util::TypeConstraints;
     
     extends 'Foo';
 
@@ -75,6 +78,14 @@ BEGIN {
     } '... extend an attribute with parameterized type';
     
     ::lives_ok {
+        has '+one_last_one' => (isa => subtype('Ref', where { blessed $_ eq 'CODE' }));        
+    } '... extend an attribute with anon-subtype';    
+    
+    ::lives_ok {
+        has '+one_last_one' => (isa => 'Value');        
+    } '... now can extend an attribute with a non-subtype';    
+
+    ::lives_ok {
         has '+bling' => (handles => ['hello']);        
     } '... we can add the handles attribute option';
     
@@ -82,16 +93,15 @@ BEGIN {
     ::dies_ok {
         has '+blang' => (handles => ['hello']);        
     } '... we can not alter the handles attribute option';    
-    ::dies_ok { 
+    ::lives_ok { 
         has '+fail' => (isa => 'Ref');           
-    } '... cannot create an attribute with an improper subtype relation';    
+    } '... can now create an attribute with an improper subtype relation';    
     ::dies_ok { 
         has '+other_fail' => (trigger => sub {});           
     } '... cannot create an attribute with an illegal option';    
     ::dies_ok { 
         has '+other_fail' => (weak_ref => 1);           
-    } '... cannot create an attribute with an illegal option';    
-    
+    } '... cannot create an attribute with an illegal option';   
 }
 
 my $foo = Foo->new;
@@ -122,6 +132,8 @@ is($foo->baz, undef, '... got the right undef default value');
     is($foo->baz, $scalar_ref, '... got the right value assigned to baz');
     
     lives_ok { $foo->bunch_of_stuff([qw[one two three]]) } '... Foo::bunch_of_stuff accepts an array of strings';    
+    
+    lives_ok { $foo->one_last_one(sub { 'Hello World'}) } '... Foo::one_last_one accepts a code ref';        
     
     my $code_ref = sub { 1 };
     lives_ok { $foo->baz($code_ref) } '... Foo::baz accepts a code ref';
@@ -177,8 +189,8 @@ ok(Bar->meta->has_attribute('gloum'), '... Bar has a gloum attr');
 ok(Bar->meta->has_attribute('bling'), '... Bar has a bling attr');
 ok(Bar->meta->has_attribute('bunch_of_stuff'), '... Bar does have a bunch_of_stuff attr');
 ok(!Bar->meta->has_attribute('blang'), '... Bar has a blang attr');
-ok(!Bar->meta->has_attribute('fail'), '... Bar does not have a fail attr');
-ok(!Bar->meta->has_attribute('other_fail'), '... Bar does not have a fail attr');
+ok(Bar->meta->has_attribute('fail'), '... Bar has a fail attr');
+ok(!Bar->meta->has_attribute('other_fail'), '... Bar does not have an other_fail attr');
 
 isnt(Foo->meta->get_attribute('foo'), 
      Bar->meta->get_attribute('foo'), 

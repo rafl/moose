@@ -8,6 +8,43 @@ our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::Method';
 
+use Sub::Name;
+
+use Carp qw(confess);
+
+sub new {
+    my ( $class, %args ) = @_;
+
+    # the package can be overridden by roles
+    # it is really more like body's compilation stash
+    # this is where we need to override the definition of super() so that the
+    # body of the code can call the right overridden version
+    my $_super_package = $args{package} || $args{class}->name;
+
+    my $name = $args{name};
+
+    my $super = $args{class}->find_next_method_by_name($name);
+
+    (defined $super)
+        || confess "You cannot override '$name' because it has no super method";
+
+    my $super_body = $super->body;
+
+    my $method = $args{method};
+
+    my $body = sub {
+        local @Moose::SUPER_ARGS = @_;
+        local $Moose::SUPER_BODY = $super_body;
+        return $method->(@_);
+    };
+
+    # FIXME do we need this make sure this works for next::method?
+    # subname "${_super_package}::${name}", $method;
+
+    # FIXME store additional attrs
+    $class->wrap($body);
+}
+
 1;
 
 __END__
@@ -20,12 +57,18 @@ Moose::Meta::Method::Overriden - A Moose Method metaclass for overriden methods
 
 =head1 DESCRIPTION
 
-This is primarily used to tag methods created with the C<override> keyword. It 
-is currently just a subclass of L<Moose::Meta::Method>. 
+This class implements method overriding logic for the L<Moose> C<override> keyword.
 
-Later releases will likely encapsulate the C<super> behavior of overriden methods, 
-rather than that being the responsibility of the class. But this is low priority
-for now.
+This involves setting up C<super> for the overriding body, and dispatching to
+the correct parent method upon its invocation.
+
+=head1 METHODS
+
+=over 4
+
+=item B<new>
+
+=back
 
 =head1 BUGS
 
@@ -35,7 +78,7 @@ to cpan-RT.
 
 =head1 AUTHOR
 
-Stevan Little E<lt>stevan@iinteractive.comE<gt>
+Yuval Kogman E<lt>nothingmuch@cpan.orgE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 

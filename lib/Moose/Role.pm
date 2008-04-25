@@ -11,7 +11,7 @@ use Sub::Name    'subname';
 use Data::OptList;
 use Sub::Exporter;
 
-our $VERSION   = '0.07';
+our $VERSION   = '0.08';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use Moose       ();
@@ -29,11 +29,7 @@ use Moose::Util::TypeConstraints;
         return $METAS{$role} if exists $METAS{$role};
 
         # make a subtype for each Moose class
-        subtype $role
-            => as 'Role'
-            => where { $_->does($role) }
-            => optimize_as { blessed($_[0]) && $_[0]->can('does') && $_[0]->does($role) }
-        unless find_type_constraint($role);
+        role_type $role unless find_type_constraint($role);
 
         my $meta;
         if ($role->can('meta')) {
@@ -105,14 +101,13 @@ use Moose::Util::TypeConstraints;
                 $meta->add_around_method_modifier($_, $code) for @_;
             };
         },
+        # see Moose.pm for discussion
         super => sub {
-            {
-              no strict 'refs';
-              $Moose::SUPER_SLOT{$CALLER} = \*{"${CALLER}::super"};
-            }
-            my $meta = _find_meta();
-            return subname 'Moose::Role::super' => sub {};
+            return subname 'Moose::Role::super' => sub { return unless $Moose::SUPER_BODY; $Moose::SUPER_BODY->(@Moose::SUPER_ARGS) }
         },
+        #next => sub {
+        #    return subname 'Moose::Role::next' => sub { @_ = @Moose::SUPER_ARGS; goto \&next::method };
+        #},
         override => sub {
             my $meta = _find_meta();
             return subname 'Moose::Role::override' => sub ($&) {
@@ -154,6 +149,10 @@ use Moose::Util::TypeConstraints;
           && defined $_[1]->{into_level} ? caller( $_[1]->{into_level} )
           :                                caller();
 
+        # this works because both pragmas set $^H (see perldoc perlvar)
+        # which affects the current compilation - i.e. the file who use'd
+        # us - which is why we don't need to do anything special to make
+        # it affect that file rather than this one (which is already compiled)
 
         strict->import;
         warnings->import;

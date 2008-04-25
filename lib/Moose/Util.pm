@@ -8,7 +8,7 @@ use Scalar::Util 'blessed';
 use Carp         'confess';
 use Class::MOP   ();
 
-our $VERSION   = '0.02';
+our $VERSION   = '0.04';
 our $AUTHORITY = 'cpan:STEVAN';
 
 my @exports = qw[
@@ -16,6 +16,8 @@ my @exports = qw[
     does_role
     search_class_by_role   
     apply_all_roles
+    get_all_init_args
+    get_all_attribute_values
 ];
 
 Sub::Exporter::setup_exporter({
@@ -76,7 +78,9 @@ sub apply_all_roles {
     
     my $meta = (blessed $applicant ? $applicant : find_meta($applicant));
     
-    Class::MOP::load_class($_->[0]) for @$roles;
+    foreach my $role_spec (@$roles) {
+        Class::MOP::load_class($role_spec->[0]);
+    }
     
     ($_->[0]->can('meta') && $_->[0]->meta->isa('Moose::Meta::Role'))
         || confess "You can only consume roles, " . $_->[0] . " is not a Moose role"
@@ -91,6 +95,50 @@ sub apply_all_roles {
             @$roles
         )->apply($meta);
     }    
+}
+
+# instance deconstruction ...
+
+sub get_all_attribute_values {
+    my ($class, $instance) = @_;
+    return +{
+        map { $_->name => $_->get_value($instance) }
+            grep { $_->has_value($instance) }
+                $class->compute_all_applicable_attributes
+    };
+}
+
+sub get_all_init_args {
+    my ($class, $instance) = @_;
+    return +{
+        map { $_->init_arg => $_->get_value($instance) }
+            grep { $_->has_value($instance) }
+                grep { defined($_->init_arg) } 
+                    $class->compute_all_applicable_attributes
+    };
+}
+
+sub resolve_metatrait_alias {
+    resolve_metaclass_alias( @_, trait => 1 );
+}
+
+sub resolve_metaclass_alias {
+    my ( $type, $metaclass_name, %options ) = @_;
+
+    if ( my $resolved = eval {
+        my $possible_full_name = 'Moose::Meta::' . $type . '::Custom::' . ( $options{trait} ? "Trait::" : "" ) . $metaclass_name;
+
+        Class::MOP::load_class($possible_full_name);
+
+        $possible_full_name->can('register_implementation')
+            ? $possible_full_name->register_implementation
+            : $possible_full_name;
+    } ) {
+        return $resolved;
+    } else {
+        Class::MOP::load_class($metaclass_name);
+        return $metaclass_name;
+    }
 }
 
 
@@ -119,11 +167,14 @@ Moose::Util - Utilities for working with Moose classes
 
 =head1 DESCRIPTION
 
-This is a set of utility functions to help working with Moose classes. This 
-is an experimental module, and it's not 100% clear what purpose it will serve. 
-That said, ideas, suggestions and contributions to this collection are most 
-welcome. See the L<TODO> section below for a list of ideas for possible 
-functions to write.
+This is a set of utility functions to help working with Moose classes, and 
+is used internally by Moose itself. The goal is to provide useful functions
+that for both Moose users and Moose extenders (MooseX:: authors).
+
+This is a relatively new addition to the Moose toolchest, so ideas, 
+suggestions and contributions to this collection are most welcome. 
+See the L<TODO> section below for a list of ideas for possible functions 
+to write.
 
 =head1 EXPORTED FUNCTIONS
 
@@ -150,6 +201,28 @@ right thing to apply the C<@roles> to the C<$applicant>. This is
 actually used internally by both L<Moose> and L<Moose::Role>, and the
 C<@roles> will be pre-processed through L<Data::OptList::mkopt>
 to allow for the additional arguments to be passed. 
+
+=item B<get_all_attribute_values($meta, $instance)>
+
+Returns the values of the C<$instance>'s fields keyed by the attribute names.
+
+=item B<get_all_init_args($meta, $instance)>
+
+Returns a hash reference where the keys are all the attributes' C<init_arg>s
+and the values are the instance's fields. Attributes without an C<init_arg>
+will be skipped.
+
+=item B<resolve_metaclass_alias($category, $name, %options)>
+
+=item B<resolve_metatrait_alias($category, $name, %options)>
+
+Resolve a short name like in e.g.
+
+    has foo => (
+        metaclass => "Bar",
+    );
+
+to a full class name.
 
 =back
 

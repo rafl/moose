@@ -9,7 +9,7 @@ use if ( not our $__mx_is_compiled ), metaclass => 'Moose::Meta::Class';
 
 use Carp 'confess';
 
-our $VERSION   = '0.10';
+our $VERSION   = '0.12';
 our $AUTHORITY = 'cpan:STEVAN';
 
 sub new {
@@ -47,8 +47,11 @@ sub DEMOLISHALL {
     # extra meta level calls    
     return unless $_[0]->can('DEMOLISH');    
     my $self = shift;    
-    foreach my $method ($self->meta->find_all_methods_by_name('DEMOLISH')) {
-        $method->{code}->($self);
+    {
+        local $@;
+        foreach my $method ($self->meta->find_all_methods_by_name('DEMOLISH')) {
+            $method->{code}->($self);
+        }
     }    
 }
 
@@ -62,8 +65,9 @@ sub does {
         || confess "You much supply a role name to does()";
     my $meta = $self->meta;
     foreach my $class ($meta->class_precedence_list) {
+        my $m = $meta->initialize($class);
         return 1 
-            if $meta->initialize($class)->does_role($role_name);            
+            if $m->can('does_role') && $m->does_role($role_name);            
     }
     return 0;   
 }
@@ -80,7 +84,7 @@ sub does {
 sub dump { 
     my $self = shift;
     require Data::Dumper;
-    $Data::Dumper::Maxdepth = shift if @_;
+    local $Data::Dumper::Maxdepth = shift if @_;
     Data::Dumper::Dumper $self;
 }
 

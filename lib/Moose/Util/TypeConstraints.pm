@@ -8,7 +8,7 @@ use Carp         'confess';
 use Scalar::Util 'blessed', 'reftype';
 use Sub::Exporter;
 
-our $VERSION   = '0.20';
+our $VERSION   = '0.22';
 our $AUTHORITY = 'cpan:STEVAN';
 
 ## --------------------------------------------------------
@@ -22,14 +22,19 @@ our $AUTHORITY = 'cpan:STEVAN';
 sub find_type_constraint                 ($);
 sub register_type_constraint             ($);
 sub find_or_create_type_constraint       ($;$);
+sub find_or_parse_type_constraint        ($);
+sub find_or_create_isa_type_constraint   ($);
+sub find_or_create_does_type_constraint  ($);
 sub create_type_constraint_union         (@);
 sub create_parameterized_type_constraint ($);
-sub create_class_type_constraint         ($);
+sub create_class_type_constraint         ($;$);
+sub create_role_type_constraint          ($;$);
+sub create_enum_type_constraint          ($$);
 
 # dah sugah!
 sub type        ($$;$$);
 sub subtype     ($$;$$$);
-sub class_type  ($);
+sub class_type  ($;$);
 sub coerce      ($@);
 sub as          ($);
 sub from        ($);
@@ -49,13 +54,16 @@ use Moose::Meta::TypeConstraint;
 use Moose::Meta::TypeConstraint::Union;
 use Moose::Meta::TypeConstraint::Parameterized;
 use Moose::Meta::TypeConstraint::Parameterizable;
+use Moose::Meta::TypeConstraint::Class;
+use Moose::Meta::TypeConstraint::Role;
+use Moose::Meta::TypeConstraint::Enum;
 use Moose::Meta::TypeCoercion;
 use Moose::Meta::TypeCoercion::Union;
 use Moose::Meta::TypeConstraint::Registry;
 use Moose::Util::TypeConstraints::OptimizedConstraints;
 
 my @exports = qw/
-    type subtype class_type as where message optimize_as
+    type subtype class_type role_type as where message optimize_as
     coerce from via
     enum
     find_type_constraint
@@ -144,47 +152,60 @@ sub create_parameterized_type_constraint ($) {
     return Moose::Meta::TypeConstraint::Parameterized->new(
         name           => $type_constraint_name,
         parent         => $REGISTRY->get_type_constraint($base_type),
-        type_parameter => find_or_create_type_constraint(
-            $type_parameter => {
-                parent     => $REGISTRY->get_type_constraint('Object'),
-                constraint => sub { $_[0]->isa($type_parameter) }
-            }
-        ),
+        type_parameter => find_or_create_isa_type_constraint($type_parameter),
     );
 }
 
-sub create_class_type_constraint ($) {
-    my $class = shift;
+#should we also support optimized checks?
+sub create_class_type_constraint ($;$) {
+    my ( $class, $options ) = @_;
 
     # too early for this check
     #find_type_constraint("ClassName")->check($class)
     #    || confess "Can't create a class type constraint because '$class' is not a class name";
 
-    Moose::Meta::TypeConstraint::Class->new( name => $class );
+    my %options = (
+        class => $class,
+        name  => $class,
+        %{ $options || {} },
+    );
+
+    $options{name} ||= "__ANON__";
+
+    Moose::Meta::TypeConstraint::Class->new( %options );
 }
 
+sub create_role_type_constraint ($;$) {
+    my ( $role, $options ) = @_;
+
+    # too early for this check
+    #find_type_constraint("ClassName")->check($class)
+    #    || confess "Can't create a class type constraint because '$class' is not a class name";
+
+    my %options = (
+        role => $role,
+        name => $role,
+        %{ $options || {} },
+    );
+
+    $options{name} ||= "__ANON__";
+
+    Moose::Meta::TypeConstraint::Role->new( %options );
+}
+
+
 sub find_or_create_type_constraint ($;$) {
-    my ($type_constraint_name, $options_for_anon_type) = @_;
+    my ( $type_constraint_name, $options_for_anon_type ) = @_;
 
-    return $REGISTRY->get_type_constraint($type_constraint_name)
-        if $REGISTRY->has_type_constraint($type_constraint_name);
-
-    my $constraint;
-
-    if (_detect_type_constraint_union($type_constraint_name)) {
-        $constraint = create_type_constraint_union($type_constraint_name);
+    if ( my $constraint = find_or_parse_type_constraint($type_constraint_name) ) {
+        return $constraint;
     }
-    elsif (_detect_parameterized_type_constraint($type_constraint_name)) {
-        $constraint = create_parameterized_type_constraint($type_constraint_name);
-    }
-    else {
+    elsif ( defined $options_for_anon_type ) {
         # NOTE:
-        # if there is no $options_for_anon_type 
-        # specified, then we assume they don't 
+        # if there is no $options_for_anon_type
+        # specified, then we assume they don't
         # want to create one, and return nothing.
-        return unless defined $options_for_anon_type;        
 
-        # NOTE:
         # otherwise assume that we should create
         # an ANON type with the $options_for_anon_type
         # options which can be passed in. It should
@@ -197,6 +218,36 @@ sub find_or_create_type_constraint ($;$) {
         );
     }
 
+    return;
+}
+
+sub find_or_create_isa_type_constraint ($) {
+    my $type_constraint_name = shift;
+    find_or_parse_type_constraint($type_constraint_name) || create_class_type_constraint($type_constraint_name)
+}
+
+sub find_or_create_does_type_constraint ($) {
+    my $type_constraint_name = shift;
+    find_or_parse_type_constraint($type_constraint_name) || create_role_type_constraint($type_constraint_name)
+}
+
+sub find_or_parse_type_constraint ($) {
+    my $type_constraint_name = shift;
+
+    return $REGISTRY->get_type_constraint($type_constraint_name)
+        if $REGISTRY->has_type_constraint($type_constraint_name);
+
+    my $constraint;
+
+    if (_detect_type_constraint_union($type_constraint_name)) {
+        $constraint = create_type_constraint_union($type_constraint_name);
+    }
+    elsif (_detect_parameterized_type_constraint($type_constraint_name)) {
+        $constraint = create_parameterized_type_constraint($type_constraint_name);
+    } else {
+        return;
+    }
+
     $REGISTRY->add_type_constraint($constraint);
     return $constraint;
 }
@@ -205,12 +256,21 @@ sub find_or_create_type_constraint ($;$) {
 ## exported functions ...
 ## --------------------------------------------------------
 
-sub find_type_constraint ($) { $REGISTRY->get_type_constraint(@_) }
+sub find_type_constraint ($) {
+    my $type = shift;
+
+    if ( blessed $type and $type->isa("Moose::Meta::TypeConstraint") ) {
+        return $type;
+    } else {
+        return $REGISTRY->get_type_constraint($type);
+    }
+}
 
 sub register_type_constraint ($) {
     my $constraint = shift;
     confess "can't register an unnamed type constraint" unless defined $constraint->name;
     $REGISTRY->add_type_constraint($constraint);
+    return $constraint;
 }
 
 # type constructors
@@ -234,8 +294,22 @@ sub subtype ($$;$$$) {
     goto &_create_type_constraint;
 }
 
-sub class_type ($) {
-    register_type_constraint( create_class_type_constraint(shift) );
+sub class_type ($;$) {
+    register_type_constraint(
+        create_class_type_constraint(
+            $_[0],
+            ( defined($_[1]) ? $_[1] : () ),
+        )
+    );
+}
+
+sub role_type ($;$) {
+    register_type_constraint(
+        create_role_type_constraint(
+            $_[0],
+            ( defined($_[1]) ? $_[1] : () ),
+        )
+    );
 }
 
 sub coerce ($@) {
@@ -253,13 +327,32 @@ sub optimize_as (&) { +{ optimized => $_[0] } }
 
 sub enum ($;@) {
     my ($type_name, @values) = @_;
+    # NOTE:
+    # if only an array-ref is passed then
+    # you get an anon-enum
+    # - SL
+    if (ref $type_name eq 'ARRAY' && !@values) {
+        @values    = @$type_name;
+        $type_name = undef;
+    }
     (scalar @values >= 2)
         || confess "You must have at least two values to enumerate through";
     my %valid = map { $_ => 1 } @values;
-    _create_type_constraint(
-        $type_name,
-        'Str',
-        sub { $valid{$_} }
+
+    register_type_constraint(
+        create_enum_type_constraint(
+            $type_name,
+            \@values,
+        )
+    );
+}
+
+sub create_enum_type_constraint ($$) {
+    my ( $type_name, $values ) = @_;
+    
+    Moose::Meta::TypeConstraint::Enum->new(
+        name   => $type_name || '__ANON__',
+        values => $values,
     );
 }
 
@@ -290,8 +383,8 @@ sub _create_type_constraint ($$$;$$) {
                  if defined $type;
     }
 
-    $parent = find_or_create_type_constraint($parent) if defined $parent;
-    
+    $parent = find_or_parse_type_constraint($parent) if defined $parent;
+
     my $constraint = Moose::Meta::TypeConstraint->new(
         name               => $name || '__ANON__',
         package_defined_in => $pkg_defined_in,
@@ -301,21 +394,21 @@ sub _create_type_constraint ($$$;$$) {
         ($message   ? (message    => $message)   : ()),
         ($optimized ? (optimized  => $optimized) : ()),
     );
-    
+
     # NOTE:
-    # if we have a type constraint union, and no 
+    # if we have a type constraint union, and no
     # type check, this means we are just aliasing
-    # the union constraint, which means we need to 
+    # the union constraint, which means we need to
     # handle this differently.
     # - SL
-    if (not(defined $check) 
-        && $parent->isa('Moose::Meta::TypeConstraint::Union') 
-        && $parent->has_coercion 
+    if (not(defined $check)
+        && $parent->isa('Moose::Meta::TypeConstraint::Union')
+        && $parent->has_coercion
         ){
         $constraint->coercion(Moose::Meta::TypeCoercion::Union->new(
             type_constraint => $parent
         ));
-    }    
+    }
 
     $REGISTRY->add_type_constraint($constraint)
         if defined $name;
@@ -378,7 +471,7 @@ sub _install_type_coercions ($$) {
         my $given = shift;
         my @rv;
         while ( $given =~ m{ \G (?: $op_union )? ($type) }gcx ) {
-                push @rv => $1;
+            push @rv => $1;
         }
         (pos($given) eq length($given))
             || confess "'$given' didn't parse (parse-pos="
@@ -504,9 +597,10 @@ $REGISTRY->add_type_constraint(
         optimized            => \&Moose::Util::TypeConstraints::OptimizedConstraints::ArrayRef,
         constraint_generator => sub {
             my $type_parameter = shift;
+            my $check = $type_parameter->_compiled_type_constraint;
             return sub {
                 foreach my $x (@$_) {
-                    ($type_parameter->check($x)) || return
+                    ($check->($x)) || return
                 } 1;
             }
         }
@@ -521,10 +615,11 @@ $REGISTRY->add_type_constraint(
         constraint           => sub { ref($_) eq 'HASH'  },
         optimized            => \&Moose::Util::TypeConstraints::OptimizedConstraints::HashRef,
         constraint_generator => sub {
-            my $type_parameter = shift;            
+            my $type_parameter = shift;
+            my $check = $type_parameter->_compiled_type_constraint;
             return sub {
                 foreach my $x (values %$_) {
-                    ($type_parameter->check($x)) || return
+                    ($check->($x)) || return
                 } 1;
             }
         }
@@ -538,26 +633,27 @@ $REGISTRY->add_type_constraint(
         parent               => find_type_constraint('Item'),
         constraint           => sub { 1 },
         constraint_generator => sub {
-            my $type_parameter = shift;            
+            my $type_parameter = shift;
+            my $check = $type_parameter->_compiled_type_constraint;
             return sub {
-                return 1 if not(defined($_)) || $type_parameter->check($_);
+                return 1 if not(defined($_)) || $check->($_);
                 return;
             }
         }
     )
 );
 
-my @PARAMETERIZABLE_TYPES = map { 
-    $REGISTRY->get_type_constraint($_) 
+my @PARAMETERIZABLE_TYPES = map {
+    $REGISTRY->get_type_constraint($_)
 } qw[ArrayRef HashRef Maybe];
 
 sub get_all_parameterizable_types { @PARAMETERIZABLE_TYPES }
-sub add_parameterizable_type { 
+sub add_parameterizable_type {
     my $type = shift;
     (blessed $type && $type->isa('Moose::Meta::TypeConstraint::Parameterizable'))
         || confess "Type must be a Moose::Meta::TypeConstraint::Parameterizable not $type";
     push @PARAMETERIZABLE_TYPES => $type;
-}    
+}
 
 ## --------------------------------------------------------
 # end of built-in types ...
@@ -611,11 +707,13 @@ and they are not used by Moose unless you tell it to. No type
 inference is performed, expression are not typed, etc. etc. etc.
 
 This is simply a means of creating small constraint functions which
-can be used to simplify your own type-checking code.
+can be used to simplify your own type-checking code, with the added 
+side benefit of making your intentions clearer through self-documentation.
 
 =head2 Slightly Less Important Caveat
 
-It is almost always a good idea to quote your type and subtype names.
+It is B<always> a good idea to quote your type and subtype names.
+
 This is to prevent perl from trying to execute the call as an indirect
 object call. This issue only seems to come up when you have a subtype
 the same name as a valid class, but when the issue does arise it tends
@@ -639,8 +737,8 @@ yet to have been created yet, is to simply do this:
 
 =head2 Default Type Constraints
 
-This module also provides a simple hierarchy for Perl 5 types, this
-could probably use some work, but it works for me at the moment.
+This module also provides a simple hierarchy for Perl 5 types, here is 
+that hierarchy represented visually.
 
   Any
   Item
@@ -664,30 +762,35 @@ could probably use some work, but it works for me at the moment.
               Object
                   Role
 
-Suggestions for improvement are welcome.
-
-B<NOTE:> Any type followed by a type parameter C<[`a]> can be 
+B<NOTE:> Any type followed by a type parameter C<[`a]> can be
 parameterized, this means you can say:
 
   ArrayRef[Int]    # an array of intergers
   HashRef[CodeRef] # a hash of str to CODE ref mappings
   Maybe[Str]       # value may be a string, may be undefined
 
-B<NOTE:> The C<Undef> type constraint for the most part works 
-correctly now, but edge cases may still exist, please use it 
+B<NOTE:> The C<Undef> type constraint for the most part works
+correctly now, but edge cases may still exist, please use it
 sparringly.
 
 B<NOTE:> The C<ClassName> type constraint does a complex package
-existence check. This means that your class B<must> be loaded for 
-this type constraint to pass. I know this is not ideal for all, 
+existence check. This means that your class B<must> be loaded for
+this type constraint to pass. I know this is not ideal for all,
 but it is a saner restriction than most others.
+
+=head2 Type Constraint Naming 
+
+Since the types created by this module are global, it is suggested 
+that you namespace your types just as you would namespace your 
+modules. So instead of creating a I<Color> type for your B<My::Graphics>
+module, you would call the type I<My::Graphics::Color> instead.
 
 =head2 Use with Other Constraint Modules
 
 This module should play fairly nicely with other constraint
 modules with only some slight tweaking. The C<where> clause
 in types is expected to be a C<CODE> reference which checks
-it's first argument and returns a bool. Since most constraint
+it's first argument and returns a boolean. Since most constraint
 modules work in a similar way, it should be simple to adapt
 them to work with Moose.
 
@@ -699,7 +802,8 @@ L<Declare::Constraints::Simple> to declare a completely new type.
           -keys   => HasLength,
           -values => IsArrayRef( IsObject ));
 
-For more examples see the F<t/204_example_w_DCS.t> test file.
+For more examples see the F<t/200_examples/204_example_w_DCS.t> 
+test file.
 
 Here is an example of using L<Test::Deep> and it's non-test
 related C<eq_deeply> function.
@@ -713,86 +817,10 @@ related C<eq_deeply> function.
               })))
         };
 
-For a complete example see the F<t/205_example_w_TestDeep.t>
-test file.
+For a complete example see the 
+F<t/200_examples/205_example_w_TestDeep.t> test file.
 
 =head1 FUNCTIONS
-
-=head2 Type Constraint Construction & Locating
-
-=over 4
-
-=item B<create_type_constraint_union ($pipe_seperated_types | @type_constraint_names)>
-
-Given string with C<$pipe_seperated_types> or a list of C<@type_constraint_names>,
-this will return a L<Moose::Meta::TypeConstraint::Union> instance.
-
-=item B<create_parameterized_type_constraint ($type_name)>
-
-Given a C<$type_name> in the form of:
-
-  BaseType[ContainerType]
-
-this will extract the base type and container type and build an instance of
-L<Moose::Meta::TypeConstraint::Parameterized> for it. 
-
-=item B<create_class_type_constraint ($class)>
-
-Given a class name it will create a new L<Moose::Meta::TypeConstraint::Class>
-object for that class name.
-
-=item B<find_or_create_type_constraint ($type_name, ?$options_for_anon_type)>
-
-This will attempt to find or create a type constraint given the a C<$type_name>.
-If it cannot find it in the registry, it will see if it should be a union or
-container type an create one if appropriate, and lastly if nothing can be
-found or created that way, it will create an anon-type using the
-C<$options_for_anon_type> HASH ref to populate it. If the C<$options_for_anon_type>
-is not specified (it is C<undef>), then it will not create anything and simply
-return.
-
-=item B<find_type_constraint ($type_name)>
-
-This function can be used to locate a specific type constraint
-meta-object, of the class L<Moose::Meta::TypeConstraint> or a
-derivative. What you do with it from there is up to you :)
-
-=item B<register_type_constraint ($type_object)>
-
-This function will register a named type constraint with the type registry.
-
-=item B<get_type_constraint_registry>
-
-Fetch the L<Moose::Meta::TypeConstraint::Registry> object which
-keeps track of all type constraints.
-
-=item B<list_all_type_constraints>
-
-This will return a list of type constraint names, you can then
-fetch them using C<find_type_constraint ($type_name)> if you
-want to.
-
-=item B<list_all_builtin_type_constraints>
-
-This will return a list of builtin type constraints, meaning,
-those which are defined in this module. See the section
-labeled L<Default Type Constraints> for a complete list.
-
-=item B<export_type_constraints_as_functions>
-
-This will export all the current type constraints as functions
-into the caller's namespace. Right now, this is mostly used for
-testing, but it might prove useful to others.
-
-=item B<get_all_parameterizable_types>
-
-This returns all the parameterizable types that have been registered.
-
-=item B<add_parameterizable_type ($type)>
-
-Adds C<$type> to the list of parameterizable types
-
-=back
 
 =head2 Type Constraint Constructors
 
@@ -818,10 +846,15 @@ This creates an unnamed subtype and will return the type
 constraint meta-object, which will be an instance of
 L<Moose::Meta::TypeConstraint>.
 
-=item B<class_type ($class)>
+=item B<class_type ($class, ?$options)>
 
 Creates a type constraint with the name C<$class> and the metaclass
 L<Moose::Meta::TypeConstraint::Class>.
+
+=item B<role_type ($role, ?$options)>
+
+Creates a type constraint with the name C<$role> and the metaclass
+L<Moose::Meta::TypeConstraint::Role>.
 
 =item B<enum ($name, @values)>
 
@@ -832,6 +865,17 @@ See the L<SYNOPSIS> for a simple example.
 
 B<NOTE:> This is not a true proper enum type, it is simple
 a convient constraint builder.
+
+=item B<enum (\@values)>
+
+If passed an ARRAY reference instead of the C<$name>, C<@values> pair,
+this will create an unnamed enum. This can then be used in an attribute
+definition like so:
+
+  has 'sort_order' => (
+      is  => 'ro',
+      isa => enum([qw[ ascending descending ]]),
+  );
 
 =item B<as>
 
@@ -878,6 +922,106 @@ This is just sugar for the type coercion construction syntax.
 =item B<via>
 
 This is just sugar for the type coercion construction syntax.
+
+=back
+
+=head2 Type Constraint Construction & Locating
+
+=over 4
+
+=item B<create_type_constraint_union ($pipe_seperated_types | @type_constraint_names)>
+
+Given string with C<$pipe_seperated_types> or a list of C<@type_constraint_names>,
+this will return a L<Moose::Meta::TypeConstraint::Union> instance.
+
+=item B<create_parameterized_type_constraint ($type_name)>
+
+Given a C<$type_name> in the form of:
+
+  BaseType[ContainerType]
+
+this will extract the base type and container type and build an instance of
+L<Moose::Meta::TypeConstraint::Parameterized> for it.
+
+=item B<create_class_type_constraint ($class, ?$options)>
+
+Given a class name it will create a new L<Moose::Meta::TypeConstraint::Class>
+object for that class name.
+
+=item B<create_role_type_constraint ($role, ?$options)>
+
+Given a role name it will create a new L<Moose::Meta::TypeConstraint::Role>
+object for that role name.
+
+=item B<create_enum_type_constraint ($name, $values)>
+
+=item B<find_or_parse_type_constraint ($type_name)>
+
+This will attempt to find or create a type constraint given the a C<$type_name>.
+If it cannot find it in the registry, it will see if it should be a union or
+container type an create one if appropriate
+
+=item B<find_or_create_type_constraint ($type_name, ?$options_for_anon_type)>
+
+This function will first call C<find_or_parse_type_constraint> with the type name.
+
+If no type is found or created, but C<$options_for_anon_type> are provided, it
+will create the corresponding type.
+
+This was used by the C<does> and C<isa> parameters to L<Moose::Meta::Attribute>
+and are now superseded by C<find_or_create_isa_type_constraint> and
+C<find_or_create_does_type_constraint>.
+
+=item B<find_or_create_isa_type_constraint ($type_name)>
+
+=item B<find_or_create_does_type_constraint ($type_name)>
+
+Attempts to parse the type name using L<find_or_parse_type_constraint> and if
+no appropriate constraint is found will create a new anonymous one.
+
+The C<isa> variant will use C<create_class_type_constraint> and the C<does>
+variant will use C<create_role_type_constraint>.
+
+=item B<find_type_constraint ($type_name)>
+
+This function can be used to locate a specific type constraint
+meta-object, of the class L<Moose::Meta::TypeConstraint> or a
+derivative. What you do with it from there is up to you :)
+
+=item B<register_type_constraint ($type_object)>
+
+This function will register a named type constraint with the type registry.
+
+=item B<get_type_constraint_registry>
+
+Fetch the L<Moose::Meta::TypeConstraint::Registry> object which
+keeps track of all type constraints.
+
+=item B<list_all_type_constraints>
+
+This will return a list of type constraint names, you can then
+fetch them using C<find_type_constraint ($type_name)> if you
+want to.
+
+=item B<list_all_builtin_type_constraints>
+
+This will return a list of builtin type constraints, meaning,
+those which are defined in this module. See the section
+labeled L<Default Type Constraints> for a complete list.
+
+=item B<export_type_constraints_as_functions>
+
+This will export all the current type constraints as functions
+into the caller's namespace. Right now, this is mostly used for
+testing, but it might prove useful to others.
+
+=item B<get_all_parameterizable_types>
+
+This returns all the parameterizable types that have been registered.
+
+=item B<add_parameterizable_type ($type)>
+
+Adds C<$type> to the list of parameterizable types
 
 =back
 

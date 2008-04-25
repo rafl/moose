@@ -84,7 +84,7 @@ is automatically created for us by Moose.
 
 The next attribute option is new, though: the C<predicate> option. 
 This option creates a method which can be used to check whether 
-a given slot (in this case C<parent>) contains a defined value. In 
+a given slot (in this case C<parent>) has been initialized. In 
 this case it will create a method called C<has_parent>. Quite simple, 
 and quite handy too.
 
@@ -190,7 +190,7 @@ right?).
 
 Now, as with all the other recipes, you can go about using 
 B<BinaryTree> like any other Perl 5 class. A more detailed example of its
-usage can be found in F<t/003_recipe.t>.
+usage can be found in F<t/000_recipes/003_recipe.t>.
 
 =head1 CONCLUSION
 

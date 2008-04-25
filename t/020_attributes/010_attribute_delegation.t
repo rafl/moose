@@ -3,13 +3,16 @@
 use strict;
 use warnings;
 
-use Test::More tests => 54;
+use Test::More tests => 85;
 use Test::Exception;
 
 BEGIN {  
     use_ok('Moose');               
 }
 
+# -------------------------------------------------------------------
+# HASH handles
+# -------------------------------------------------------------------
 # the canonical form of of the 'handles'
 # option is the hash ref mapping a 
 # method name to the delegated method name
@@ -41,6 +44,26 @@ is($bar->foo->bar, 10, '... bar->foo->bar returned the right default');
 can_ok($bar, 'foo_bar');
 is($bar->foo_bar, 10, '... bar->foo_bar delegated correctly');
 
+# change the value ...
+
+$bar->foo->bar(30);
+
+# and make sure the delegation picks it up
+
+is($bar->foo->bar, 30, '... bar->foo->bar returned the right (changed) value');
+is($bar->foo_bar, 30, '... bar->foo_bar delegated correctly');
+
+# change the value through the delegation ...
+
+$bar->foo_bar(50);
+
+# and make sure everyone sees it 
+
+is($bar->foo->bar, 50, '... bar->foo->bar returned the right (changed) value');
+is($bar->foo_bar, 50, '... bar->foo_bar delegated correctly');
+
+# change the object we are delegating too
+
 my $foo = Foo->new(bar => 25);
 isa_ok($foo, 'Foo');
 
@@ -55,6 +78,9 @@ is($bar->foo, $foo, '... assigned bar->foo with the new Foo');
 is($bar->foo->bar, 25, '... bar->foo->bar returned the right result');
 is($bar->foo_bar, 25, '... and bar->foo_bar delegated correctly again');
 
+# -------------------------------------------------------------------
+# ARRAY handles 
+# -------------------------------------------------------------------
 # we also support an array based format
 # which assumes that the name is the same 
 # on either end
@@ -92,6 +118,9 @@ can_ok($car, 'stop');
 is($car->go, 'Engine::go', '... got the right value from ->go');
 is($car->stop, 'Engine::stop', '... got the right value from ->stop');
 
+# -------------------------------------------------------------------
+# REGEXP handles 
+# -------------------------------------------------------------------
 # and we support regexp delegation
 
 {
@@ -175,6 +204,10 @@ is($car->stop, 'Engine::stop', '... got the right value from ->stop');
     is($baz_proxy->boo, 'Baz::boo', '... got the right proxied return value');    
 }
 
+# -------------------------------------------------------------------
+# ROLE handles
+# -------------------------------------------------------------------
+
 {
     package Foo::Bar;
     use Moose::Role;
@@ -214,8 +247,145 @@ is($car->stop, 'Engine::stop', '... got the right value from ->stop');
     is($foo->thing->baz, 'Foo::Baz::BAZ', '... got the right value');        
 }
 
+# -------------------------------------------------------------------
+# AUTOLOAD & handles
+# -------------------------------------------------------------------
 
+{
+    package Foo::Autoloaded;
+    use Moose;
 
+    sub AUTOLOAD {
+        my $self = shift;
 
+        my $name = our $AUTOLOAD;
+        $name =~ s/.*://;		# strip fully-qualified portion
 
+        if (@_) {
+            return $self->{$name} = shift;
+        } else {
+            return $self->{$name};
+        }
+    }
 
+    package Bar::Autoloaded;
+    use Moose; 
+    
+    has 'foo' => (
+        is      => 'rw',
+        default => sub { Foo::Autoloaded->new },
+        handles => { 'foo_bar' => 'bar' }
+    );
+    
+    package Baz::Autoloaded;
+    use Moose; 
+    
+    has 'foo' => (
+        is      => 'rw',
+        default => sub { Foo::Autoloaded->new },
+        handles => ['bar']
+    );    
+    
+    package Goorch::Autoloaded;
+    use Moose; 
+    
+    ::dies_ok {
+        has 'foo' => (
+            is      => 'rw',
+            default => sub { Foo::Autoloaded->new },
+            handles => qr/bar/
+        );    
+    } '... you cannot delegate to AUTOLOADED class with regexp';
+}
+
+# check HASH based delegation w/ AUTOLOAD
+
+{
+    my $bar = Bar::Autoloaded->new;
+    isa_ok($bar, 'Bar::Autoloaded');
+
+    ok($bar->foo, '... we have something in bar->foo');
+    isa_ok($bar->foo, 'Foo::Autoloaded');
+
+    # change the value ...
+
+    $bar->foo->bar(30);
+
+    # and make sure the delegation picks it up
+
+    is($bar->foo->bar, 30, '... bar->foo->bar returned the right (changed) value');
+    is($bar->foo_bar, 30, '... bar->foo_bar delegated correctly');
+
+    # change the value through the delegation ...
+
+    $bar->foo_bar(50);
+
+    # and make sure everyone sees it 
+
+    is($bar->foo->bar, 50, '... bar->foo->bar returned the right (changed) value');
+    is($bar->foo_bar, 50, '... bar->foo_bar delegated correctly');
+
+    # change the object we are delegating too
+
+    my $foo = Foo::Autoloaded->new;
+    isa_ok($foo, 'Foo::Autoloaded');
+
+    $foo->bar(25);
+    
+    is($foo->bar, 25, '... got the right foo->bar');
+
+    lives_ok {
+        $bar->foo($foo);
+    } '... assigned the new Foo to Bar->foo';
+
+    is($bar->foo, $foo, '... assigned bar->foo with the new Foo');
+
+    is($bar->foo->bar, 25, '... bar->foo->bar returned the right result');
+    is($bar->foo_bar, 25, '... and bar->foo_bar delegated correctly again');
+}
+
+# check ARRAY based delegation w/ AUTOLOAD
+
+{
+    my $baz = Baz::Autoloaded->new;
+    isa_ok($baz, 'Baz::Autoloaded');
+
+    ok($baz->foo, '... we have something in baz->foo');
+    isa_ok($baz->foo, 'Foo::Autoloaded');
+
+    # change the value ...
+
+    $baz->foo->bar(30);
+
+    # and make sure the delegation picks it up
+
+    is($baz->foo->bar, 30, '... baz->foo->bar returned the right (changed) value');
+    is($baz->bar, 30, '... baz->foo_bar delegated correctly');
+
+    # change the value through the delegation ...
+
+    $baz->bar(50);
+
+    # and make sure everyone sees it 
+
+    is($baz->foo->bar, 50, '... baz->foo->bar returned the right (changed) value');
+    is($baz->bar, 50, '... baz->foo_bar delegated correctly');
+
+    # change the object we are delegating too
+
+    my $foo = Foo::Autoloaded->new;
+    isa_ok($foo, 'Foo::Autoloaded');
+
+    $foo->bar(25);
+    
+    is($foo->bar, 25, '... got the right foo->bar');
+
+    lives_ok {
+        $baz->foo($foo);
+    } '... assigned the new Foo to Baz->foo';
+
+    is($baz->foo, $foo, '... assigned baz->foo with the new Foo');
+
+    is($baz->foo->bar, 25, '... baz->foo->bar returned the right result');
+    is($baz->bar, 25, '... and baz->foo_bar delegated correctly again');
+}

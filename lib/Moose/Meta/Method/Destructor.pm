@@ -7,7 +7,7 @@ use warnings;
 use Carp         'confess';
 use Scalar::Util 'blessed', 'weaken';
 
-our $VERSION   = '0.01';
+our $VERSION   = '0.02';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::Method',
@@ -33,7 +33,7 @@ sub new {
     # needed
     weaken($self->{'$!associated_metaclass'});    
 
-    $self->intialize_body;
+    $self->initialize_body;
 
     return $self;    
 }
@@ -47,7 +47,7 @@ sub associated_metaclass { (shift)->{'$!associated_metaclass'} }
 
 sub is_needed { defined $_[0]->{'&!body'} ? 1 : 0 }
 
-sub intialize_body {
+sub initialize_body {
     my $self = shift;
     # TODO:
     # the %options should also include a both 
@@ -63,7 +63,7 @@ sub intialize_body {
         push @DEMOLISH_calls => '$_[0]->' . $method->{class} . '::DEMOLISH()';    
     }
     
-    $source .= join "\n" => @DEMOLISH_calls;
+    $source .= join ";\n" => @DEMOLISH_calls;
 
     $source .= ";\n" . '}'; 
     warn $source if $self->options->{debug};    
@@ -108,7 +108,7 @@ not particularly useful.
 
 =item B<is_needed>
 
-=item B<intialize_body>
+=item B<initialize_body>
 
 =item B<associated_metaclass>
 

@@ -4,20 +4,20 @@ package Moose;
 use strict;
 use warnings;
 
-our $VERSION   = '0.35';
+our $VERSION   = '0.41';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use Scalar::Util 'blessed', 'reftype';
-use Carp         'confess';
+use Carp         'confess', 'croak';
 use Sub::Name    'subname';
 
 use Sub::Exporter;
 
-use Class::MOP 0.51;
+use MRO::Compat;
+use Class::MOP;
 
 use Moose::Meta::Class;
 use Moose::Meta::TypeConstraint;
-use Moose::Meta::TypeConstraint::Class;
 use Moose::Meta::TypeCoercion;
 use Moose::Meta::Attribute;
 use Moose::Meta::Instance;
@@ -33,8 +33,8 @@ use Moose::Util ();
 
     sub init_meta {
         my ( $class, $base_class, $metaclass ) = @_;
-        $base_class = $class unless defined $base_class;
-        $metaclass = 'Moose::Meta::Class' unless defined $metaclass;
+        $base_class = 'Moose::Object'      unless defined $base_class;
+        $metaclass  = 'Moose::Meta::Class' unless defined $metaclass;
 
         confess
             "The Metaclass $metaclass must be a subclass of Moose::Meta::Class."
@@ -73,6 +73,8 @@ use Moose::Util ();
         # make sure they inherit from Moose::Object
         $meta->superclasses($base_class)
           unless $meta->superclasses();
+         
+        return $meta;
     }
 
     my %exports = (
@@ -80,13 +82,17 @@ use Moose::Util ();
             my $class = $CALLER;
             return subname 'Moose::extends' => sub (@) {
                 confess "Must derive at least one class" unless @_;
-                Class::MOP::load_class($_) for @_;
+        
+                my @supers = @_;
+                foreach my $super (@supers) {
+                    Class::MOP::load_class($super);
+                }
 
                 # this checks the metaclass to make sure
                 # it is correct, sometimes it can get out
                 # of sync when the classes are being built
-                my $meta = $class->meta->_fix_metaclass_incompatability(@_);
-                $meta->superclasses(@_);
+                my $meta = $class->meta->_fix_metaclass_incompatability(@supers);
+                $meta->superclasses(@supers);
             };
         },
         with => sub {
@@ -98,7 +104,9 @@ use Moose::Util ();
         has => sub {
             my $class = $CALLER;
             return subname 'Moose::has' => sub ($;%) {
-                my ( $name, %options ) = @_;
+                my $name    = shift;
+                croak 'Usage: has \'name\' => ( key => value, ... )' if @_ == 1;
+                my %options = @_;
                 my $attrs = ( ref($name) eq 'ARRAY' ) ? $name : [ ($name) ];
                 $class->meta->add_attribute( $_, %options ) for @$attrs;
             };
@@ -128,13 +136,12 @@ use Moose::Util ();
             };
         },
         super => sub {
-            {
-                our %SUPER_SLOT;
-                no strict 'refs';
-                $SUPER_SLOT{$CALLER} = \*{"${CALLER}::super"};
-            }
-            return subname 'Moose::super' => sub { };
+            # FIXME can be made into goto, might break caller() for existing code
+            return subname 'Moose::super' => sub { return unless our $SUPER_BODY; $SUPER_BODY->(our @SUPER_ARGS) }
         },
+        #next => sub {
+        #    return subname 'Moose::next' => sub { @_ = our @SUPER_ARGS; goto \&next::method };
+        #},
         override => sub {
             my $class = $CALLER;
             return subname 'Moose::override' => sub ($&) {
@@ -143,12 +150,19 @@ use Moose::Util ();
             };
         },
         inner => sub {
-            {
-                our %INNER_SLOT;
-                no strict 'refs';
-                $INNER_SLOT{$CALLER} = \*{"${CALLER}::inner"};
-            }
-            return subname 'Moose::inner' => sub { };
+            return subname 'Moose::inner' => sub {
+                my $pkg = caller();
+                our ( %INNER_BODY, %INNER_ARGS );
+
+                if ( my $body = $INNER_BODY{$pkg} ) {
+                    my @args = @{ $INNER_ARGS{$pkg} };
+                    local $INNER_ARGS{$pkg};
+                    local $INNER_BODY{$pkg};
+                    return $body->(@args);
+                } else {
+                    return;
+                }
+            };
         },
         augment => sub {
             my $class = $CALLER;
@@ -157,6 +171,14 @@ use Moose::Util ();
                 $class->meta->add_augment_method_modifier( $name => $method );
             };
         },
+        make_immutable => sub {
+            my $class = $CALLER;
+            return subname 'Moose::make_immutable' => sub {
+                warn "The make_immutable keyword has been deprecated, " . 
+                     "please go back to __PACKAGE__->meta->make_immutable\n";
+                $class->meta->make_immutable(@_);
+            };            
+        },        
         confess => sub {
             return \&Carp::confess;
         },
@@ -185,6 +207,11 @@ use Moose::Util ();
 
     sub import {
         $CALLER = _get_caller(@_);
+
+        # this works because both pragmas set $^H (see perldoc perlvar)
+        # which affects the current compilation - i.e. the file who use'd
+        # us - which is why we don't need to do anything special to make
+        # it affect that file rather than this one (which is already compiled)
 
         strict->import;
         warnings->import;
@@ -360,6 +387,19 @@ L<Moose::Object>) this includes properly initializing all instance slots,
 setting defaults where appropriate, and performing any type constraint checking
 or coercion.
 
+=head1 PROVIDED METHODS
+
+Moose provides a number of methods to all your classes, mostly through the 
+inheritance of L<Moose::Object>. There is however, one exception.
+
+=over 4
+
+=item B<meta>
+
+This is a method which provides access to the current class's metaclass.
+
+=back
+
 =head1 EXPORTED FUNCTIONS
 
 Moose will export a number of functions into the class's namespace which
@@ -367,10 +407,6 @@ may then be used to set up the class. These functions all work directly
 on the current class.
 
 =over 4
-
-=item B<meta>
-
-This is a method which provides access to the current class's metaclass.
 
 =item B<extends (@superclasses)>
 
@@ -383,8 +419,7 @@ superclasses still properly inherit from L<Moose::Object>.
 
 =item B<with (@roles)>
 
-This will apply a given set of C<@roles> to the local class. Role support
-is currently under heavy development; see L<Moose::Role> for more details.
+This will apply a given set of C<@roles> to the local class. 
 
 =item B<has $name =E<gt> %options>
 
@@ -403,7 +438,8 @@ accessor respectively, using the same name as the C<$name> of the attribute.
 
 If you need more control over how your accessors are named, you can use the
 I<reader>, I<writer> and I<accessor> options inherited from
-L<Class::MOP::Attribute>.
+L<Class::MOP::Attribute>, however if you use those, you won't need the I<is> 
+option.
 
 =item I<isa =E<gt> $type_name>
 
@@ -448,22 +484,6 @@ If an attribute is marked as lazy it B<must> have a default supplied.
 This tells the accessor whether to automatically dereference the value returned.
 This is only legal if your C<isa> option is either C<ArrayRef> or C<HashRef>.
 
-=item I<metaclass =E<gt> $metaclass_name>
-
-This tells the class to use a custom attribute metaclass for this particular
-attribute. Custom attribute metaclasses are useful for extending the
-capabilities of the I<has> keyword: they are the simplest way to extend the MOP,
-but they are still a fairly advanced topic and too much to cover here. I will
-try and write a recipe on them soon.
-
-The default behavior here is to just load C<$metaclass_name>; however, we also
-have a way to alias to a shorter name. This will first look to see if
-B<Moose::Meta::Attribute::Custom::$metaclass_name> exists. If it does, Moose
-will then check to see if that has the method C<register_implementation>, which
-should return the actual name of the custom attribute metaclass. If there is no
-C<register_implementation> method, it will fall back to using
-B<Moose::Meta::Attribute::Custom::$metaclass_name> as the metaclass name.
-
 =item I<trigger =E<gt> $code>
 
 The I<trigger> option is a CODE reference which will be called after the value of
@@ -477,10 +497,6 @@ attribute.
 The I<handles> option provides Moose classes with automated delegation features.
 This is a pretty complex and powerful option. It accepts many different option
 formats, each with its own benefits and drawbacks.
-
-B<NOTE:> This feature is no longer experimental, but it may still have subtle
-bugs lurking in the deeper corners. If you think you have found a bug, you
-probably have, so please report it to me right away.
 
 B<NOTE:> The class being delegated to does not need to be a Moose based class,
 which is why this feature is especially useful when wrapping non-Moose classes.
@@ -581,12 +597,44 @@ a HASH ref) of the methods you want mapped.
 
 =back
 
+=item I<metaclass =E<gt> $metaclass_name>
+
+This tells the class to use a custom attribute metaclass for this particular
+attribute. Custom attribute metaclasses are useful for extending the
+capabilities of the I<has> keyword: they are the simplest way to extend the MOP,
+but they are still a fairly advanced topic and too much to cover here, see 
+L<Moose::Cookbook::Recipe11> for more information.
+
+The default behavior here is to just load C<$metaclass_name>; however, we also
+have a way to alias to a shorter name. This will first look to see if
+B<Moose::Meta::Attribute::Custom::$metaclass_name> exists. If it does, Moose
+will then check to see if that has the method C<register_implementation>, which
+should return the actual name of the custom attribute metaclass. If there is no
+C<register_implementation> method, it will fall back to using
+B<Moose::Meta::Attribute::Custom::$metaclass_name> as the metaclass name.
+
+=item I<traits =E<gt> [ @role_names ]>
+
+This tells Moose to take the list of C<@role_names> and apply them to the 
+attribute meta-object. This is very similar to the I<metaclass> option, but 
+allows you to use more than one extension at a time. This too is an advanced 
+topic, we don't yet have a cookbook for it though. 
+
+As with I<metaclass>, the default behavior is to just load C<$role_name>; however, 
+we also have a way to alias to a shorter name. This will first look to see if
+B<Moose::Meta::Attribute::Custom::Trait::$role_name> exists. If it does, Moose
+will then check to see if that has the method C<register_implementation>, which
+should return the actual name of the custom attribute trait. If there is no
+C<register_implementation> method, it will fall back to using
+B<Moose::Meta::Attribute::Custom::Trait::$metaclass_name> as the trait name.
+
 =back
 
 =item B<has +$name =E<gt> %options>
 
 This is variation on the normal attibute creator C<has> which allows you to
-clone and extend an attribute from a superclass. Here is a quick example:
+clone and extend an attribute from a superclass or from a role. Here is an 
+example of the superclass usage:
 
   package Foo;
   use Moose;
@@ -608,8 +656,31 @@ What is happening here is that B<My::Foo> is cloning the C<message> attribute
 from its parent class B<Foo>, retaining the C<is =E<gt> 'rw'> and C<isa =E<gt>
 'Str'> characteristics, but changing the value in C<default>.
 
-This feature is restricted somewhat, so as to try and force at least I<some>
-sanity into it. You are only allowed to change the following attributes:
+Here is another example, but within the context of a role:
+
+  package Foo::Role;
+  use Moose::Role;
+  
+  has 'message' => (
+      is      => 'rw',
+      isa     => 'Str',
+      default => 'Hello, I am a Foo'
+  );
+  
+  package My::Foo;
+  use Moose;
+  
+  with 'Foo::Role';
+  
+  has '+message' => (default => 'Hello I am My::Foo');
+
+In this case, we are basically taking the attribute which the role supplied 
+and altering it within the bounds of this feature. 
+
+Aside from where the attributes come from (one from superclass, the other 
+from a role), this feature works exactly the same. This feature is restricted 
+somewhat, so as to try and force at least I<some> sanity into it. You are only 
+allowed to change the following attributes:
 
 =over 4
 
@@ -635,12 +706,21 @@ Change if the attribute lazily initializes the slot.
 
 =item I<isa>
 
-You I<are> allowed to change the type, B<if and only if> the new type is a
-subtype of the old type.
+You I<are> allowed to change the type without restriction. 
+
+It is recommended that you use this freedom with caution. We used to 
+only allow for extension only if the type was a subtype of the parent's 
+type, but we felt that was too restrictive and is better left as a 
+policy descision. 
 
 =item I<handles>
 
 You are allowed to B<add> a new C<handles> definition, but you are B<not>
+allowed to I<change> one.
+
+=item I<builder>
+
+You are allowed to B<add> a new C<builder> definition, but you are B<not>
 allowed to I<change> one.
 
 =back
@@ -674,18 +754,18 @@ method call and the C<SUPER::> pseudo-package; it is really your choice.
 The keyword C<inner>, much like C<super>, is a no-op outside of the context of
 an C<augment> method. You can think of C<inner> as being the inverse of
 C<super>; the details of how C<inner> and C<augment> work is best described in
-the L<Moose::Cookbook>.
+the L<Moose::Cookbook::Recipe7>.
 
 =item B<augment ($name, &sub)>
 
 An C<augment> method, is a way of explicitly saying "I am augmenting this
 method from my superclass". Once again, the details of how C<inner> and
-C<augment> work is best described in the L<Moose::Cookbook>.
+C<augment> work is best described in the L<Moose::Cookbook::Recipe7>.
 
 =item B<confess>
 
 This is the C<Carp::confess> function, and exported here because I use it
-all the time. This feature may change in the future, so you have been warned.
+all the time. 
 
 =item B<blessed>
 
@@ -775,6 +855,13 @@ two features separate (yet interoperable) actually makes them easy to use, since
 their behavior is then easier to predict. Time will tell whether I am right or
 not (UPDATE: so far so good).
 
+=item *
+
+It is important to note that we currently have no simple way of combining 
+multiple extended versions of Moose (see L<EXTENDING AND EMBEDDING MOOSE> above), 
+and that in many cases they will conflict with one another. We are working on 
+developing a way around this issue, but in the meantime, you have been warned.
+
 =back
 
 =head1 ACKNOWLEDGEMENTS
@@ -791,7 +878,7 @@ and it certainly wouldn't have this name ;P
 =item The basis of the TypeContraints module was Rob Kinyon's idea
 originally, I just ran with it.
 
-=item Thanks to mst & chansen and the whole #moose poose for all the
+=item Thanks to mst & chansen and the whole #moose posse for all the
 early ideas/feature-requests/encouragement/bug-finding.
 
 =item Thanks to David "Theory" Wheeler for meta-discussions and spelling fixes.
@@ -817,6 +904,17 @@ technologies.
 =item Moose stats on ohloh.net - L<http://www.ohloh.net/projects/5788>
 
 =item Several Moose extension modules in the L<MooseX::> namespace.
+
+=back
+
+=head2 Books
+
+=over 4
+
+=item The Art of the MetaObject Protocol
+
+I mention this in the L<Class::MOP> docs too, this book was critical in 
+the development of both modules and is highly recommended.
 
 =back
 

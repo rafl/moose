@@ -6,7 +6,7 @@ use warnings;
 
 use Carp 'confess';
 
-our $VERSION   = '0.11';
+our $VERSION   = '0.12';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::Method',
@@ -24,10 +24,11 @@ sub _eval_code {
 
     my $type_constraint_obj  = $attr->type_constraint;
     my $type_constraint_name = $type_constraint_obj && $type_constraint_obj->name;
-    my $type_constraint = $type_constraint_obj
-                                ? $type_constraint_obj->_compiled_type_constraint
-                                : undef;
+    my $type_constraint      = $type_constraint_obj
+                                   ? $type_constraint_obj->_compiled_type_constraint
+                                   : undef;
 
+    #warn "code for $attr_name =>\n" . $code . "\n";
     my $sub = eval $code;
     confess "Could not create writer for '$attr_name' because $@ \n code: $code" if $@;
     return $sub;
@@ -124,11 +125,10 @@ sub _inline_check_constraint {
     # FIXME
     # This sprintf is insanely annoying, we should
     # fix it someday - SL
-    return sprintf <<'EOF', $value, $attr_name, $type_constraint_name, $value, $value, $value, $value, $value, $value
+    return sprintf <<'EOF', $value, $attr_name, $value, $value,
 $type_constraint->(%s)
-        || confess "Attribute (%s) does not pass the type constraint (%s) with "
-       . (defined(%s) ? overload::StrVal(%s) : "undef")
-  if defined(%s);
+        || confess "Attribute (%s) does not pass the type constraint because: "
+       . $type_constraint_obj->get_message(%s);
 EOF
 }
 
@@ -175,32 +175,42 @@ sub _inline_check_lazy {
             $code .= '    $default = $type_constraint_obj->coerce($default);'."\n"  if $attr->should_coerce;
             $code .= '    ($type_constraint->($default))' .
                      '            || confess "Attribute (" . $attr_name . ") does not pass the type constraint ("' .
-                     '           . $type_constraint_name . ") with " . (defined($default) ? overload::StrVal($default) : "undef")' .
-                     '          if defined($default);' . "\n" .
-                     '        ' . $slot_access . ' = $default; ' . "\n";
+                     '           . $type_constraint_name . ") with " . (defined($default) ? overload::StrVal($default) : "undef");' 
+                     . "\n";
+            $code .= '    ' . $self->_inline_init_slot($attr, $inv, $slot_access, '$default') . "\n";
         } 
         else {
-            $code .= '    ' . $slot_access . " = undef; \n";
+            $code .= '    ' . $self->_inline_init_slot($attr, $inv, $slot_access, 'undef') . "\n";
         }
 
     } else {
         if ($attr->has_default) {
-            $code .= '    '.$slot_access.' = $attr->default(' . $inv . ');'."\n";
+            $code .= '    ' . $self->_inline_init_slot($attr, $inv, $slot_access, ('$attr->default(' . $inv . ')')) . "\n";            
         } 
         elsif ($attr->has_builder) {
-            $code .= '    if(my $builder = '.$inv.'->can($attr->builder)){ '."\n".
-                     '        '.$slot_access.' = '.$inv.'->$builder; '. "\n    } else {\n" .
+            $code .= '    if (my $builder = '.$inv.'->can($attr->builder)) { ' . "\n" 
+                  .  '       ' . $self->_inline_init_slot($attr, $inv, $slot_access, ($inv . '->$builder'))           
+                     . "\n    } else {\n" .
                      '        confess(Scalar::Util::blessed('.$inv.')." does not support builder method '.
                      '\'".$attr->builder."\' for attribute \'" . $attr->name . "\'");'. "\n    }";
         } 
         else {
-            $code .= '    ' . $slot_access . " = undef; \n";
+            $code .= '    ' . $self->_inline_init_slot($attr, $inv, $slot_access, 'undef') . "\n";
         }
     }
     $code .= "}\n";
     return $code;
 }
 
+sub _inline_init_slot {
+    my ($self, $attr, $inv, $slot_access, $value) = @_;
+    if ($attr->has_initializer) {
+        return ('$attr->set_initial_value(' . $inv . ', ' . $value . ');');
+    }
+    else {
+        return ($slot_access . ' = ' . $value . ';');
+    }    
+}
 
 sub _inline_store {
     my ($self, $instance, $value) = @_;

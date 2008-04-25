@@ -110,8 +110,7 @@ sub apply_methods {
             $class->get_method($method_name)->body != $role->get_method($method_name)->body) {
             next;
         }
-        else {           
-            
+        else {
             # add it, although it could be overriden
             $class->alias_method(
                 $method_name,
@@ -179,7 +178,7 @@ __END__
 
 =head1 NAME
 
-Moose::Meta::Role::Application::ToClass
+Moose::Meta::Role::Application::ToClass - Compose a role into a class
 
 =head1 DESCRIPTION
 

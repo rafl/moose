@@ -10,9 +10,9 @@ use overload '""'     => sub { shift->name },   # stringify to tc name
 
 use Sub::Name    'subname';
 use Carp         'confess';
-use Scalar::Util 'blessed';
+use Scalar::Util qw(blessed refaddr);
 
-our $VERSION   = '0.11';
+our $VERSION   = '0.12';
 our $AUTHORITY = 'cpan:STEVAN';
 
 __PACKAGE__->meta->add_attribute('name'       => (reader => 'name'));
@@ -38,6 +38,11 @@ __PACKAGE__->meta->add_attribute('hand_optimized_type_constraint' => (
     accessor  => 'hand_optimized_type_constraint',
     predicate => 'has_hand_optimized_type_constraint',
 ));
+
+sub parents {
+    my $self;
+    $self->parent;
+}
 
 # private accessors
 
@@ -65,30 +70,67 @@ sub validate {
         return undef;
     }
     else {
-        if ($self->has_message) {
-            local $_ = $value;
-            return $self->message->($value);
-        }
-        else {
-            return "Validation failed for '" . $self->name . "' failed";
-        }
+        $self->get_message($value);
     }
+}
+
+sub get_message {
+    my ($self, $value) = @_;
+    $value = (defined $value ? overload::StrVal($value) : 'undef');
+    if (my $msg = $self->message) {
+        local $_ = $value;
+        return $msg->($value);
+    }
+    else {
+        return "Validation failed for '" . $self->name . "' failed with value $value";
+    }    
 }
 
 ## type predicates ...
 
+sub equals {
+    my ( $self, $type_or_name ) = @_;
+
+    my $other = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
+
+    return 1 if refaddr($self) == refaddr($other);
+
+    if ( $self->has_hand_optimized_type_constraint and $other->has_hand_optimized_type_constraint ) {
+        return 1 if $self->hand_optimized_type_constraint == $other->hand_optimized_type_constraint;
+    }
+
+    return unless $self->constraint == $other->constraint;
+
+    if ( $self->has_parent ) {
+        return unless $other->has_parent;
+        return unless $self->parent->equals( $other->parent );
+    } else {
+        return if $other->has_parent;
+    }
+
+    return 1;
+}
+
 sub is_a_type_of {
-    my ($self, $type_name) = @_;
-    ($self->name eq $type_name || $self->is_subtype_of($type_name));
+    my ($self, $type_or_name) = @_;
+
+    my $type = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
+
+    ($self->equals($type) || $self->is_subtype_of($type));
 }
 
 sub is_subtype_of {
-    my ($self, $type_name) = @_;
+    my ($self, $type_or_name) = @_;
+
+    my $type = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
+
     my $current = $self;
+
     while (my $parent = $current->parent) {
-        return 1 if $parent->name eq $type_name;
+        return 1 if $parent->equals($type);
         $current = $parent;
     }
+
     return 0;
 }
 
@@ -181,7 +223,7 @@ sub _collect_all_parents {
 
 ## this should get deprecated actually ...
 
-sub union { die "DEPRECATED" }
+sub union { Carp::croak "DEPRECATED" }
 
 1;
 
@@ -212,12 +254,14 @@ If you wish to use features at this depth, please come to the
 
 =item B<new>
 
-=item B<is_a_type_of ($type_name)>
+=item B<equals ($type_name_or_object)>
+
+=item B<is_a_type_of ($type_name_or_object)>
 
 This checks the current type name, and if it does not match,
 checks if it is a subtype of it.
 
-=item B<is_subtype_of ($type_name)>
+=item B<is_subtype_of ($type_name_or_object)>
 
 =item B<compile_type_constraint>
 
@@ -243,11 +287,15 @@ the C<message> will be used to construct a custom error message.
 
 =item B<has_parent>
 
+=item B<parents>
+
 =item B<constraint>
 
 =item B<has_message>
 
 =item B<message>
+
+=item B<get_message ($value)>
 
 =item B<has_coercion>
 

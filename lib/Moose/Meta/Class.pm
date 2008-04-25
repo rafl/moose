@@ -9,10 +9,11 @@ use Class::MOP;
 use Carp         'confess';
 use Scalar::Util 'weaken', 'blessed', 'reftype';
 
-our $VERSION   = '0.17';
+our $VERSION   = '0.21';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use Moose::Meta::Method::Overriden;
+use Moose::Meta::Method::Augmented;
 
 use base 'Class::MOP::Class';
 
@@ -29,6 +30,47 @@ sub initialize {
         'method_metaclass'    => 'Moose::Meta::Method',
         'instance_metaclass'  => 'Moose::Meta::Instance',
         @_);
+}
+
+sub create {
+    my ($self, $package_name, %options) = @_;
+    
+    (ref $options{roles} eq 'ARRAY')
+        || confess "You must pass an ARRAY ref of roles"
+            if exists $options{roles};
+    
+    my $class = $self->SUPER::create($package_name, %options);
+    
+    if (exists $options{roles}) {
+        Moose::Util::apply_all_roles($class, @{$options{roles}});
+    }
+    
+    return $class;
+}
+
+my %ANON_CLASSES;
+
+sub create_anon_class {
+    my ($self, %options) = @_;
+
+    my $cache_ok = delete $options{cache};
+    
+    # something like Super::Class|Super::Class::2=Role|Role::1
+    my $cache_key = join '=' => (
+        join('|', sort @{$options{superclasses} || []}),
+        join('|', sort @{$options{roles}        || []}),
+    );
+    
+    if ($cache_ok && defined $ANON_CLASSES{$cache_key}) {
+        return $ANON_CLASSES{$cache_key};
+    }
+    
+    my $new_class = $self->SUPER::create_anon_class(%options);
+
+    $ANON_CLASSES{$cache_key} = $new_class
+        if $cache_ok;
+
+    return $new_class;
 }
 
 sub add_role {
@@ -49,7 +91,7 @@ sub does_role {
     (defined $role_name)
         || confess "You must supply a role name to look for";
     foreach my $class ($self->class_precedence_list) {
-        next unless $class->can('meta');
+        next unless $class->can('meta') && $class->meta->can('roles');
         foreach my $role (@{$class->meta->roles}) {
             return 1 if $role->does_role($role_name);
         }
@@ -80,12 +122,28 @@ sub new_object {
     my ($class, %params) = @_;
     my $self = $class->SUPER::new_object(%params);
     foreach my $attr ($class->compute_all_applicable_attributes()) {
-        # FIXME:
-        # this does not accept undefined
-        # values, nor does it accept false
-        # values to be passed into the init-arg
-        next unless $params{$attr->init_arg} && $attr->can('has_trigger') && $attr->has_trigger;
-        $attr->trigger->($self, $params{$attr->init_arg}, $attr);
+        # if we have a trigger, then ...
+        if ($attr->can('has_trigger') && $attr->has_trigger) {
+            # make sure we have an init-arg ...
+            if (defined(my $init_arg = $attr->init_arg)) {
+                # now make sure an init-arg was passes ...
+                if (exists $params{$init_arg}) {
+                    # and if get here, fire the trigger
+                    $attr->trigger->(
+                        $self, 
+                        # check if there is a coercion
+                        ($attr->should_coerce
+                            # and if so, we need to grab the 
+                            # value that is actually been stored
+                            ? $attr->get_read_method_ref->($self)
+                            # otherwise, just get the value from
+                            # the constructor params
+                            : $params{$init_arg}), 
+                        $attr
+                    );
+                }
+            }       
+        }
     }
     return $self;
 }
@@ -99,7 +157,7 @@ sub construct_instance {
     # have to kludge it in the end.
     my $instance = $params{'__INSTANCE__'} || $meta_instance->create_instance();
     foreach my $attr ($class->compute_all_applicable_attributes()) {
-        $attr->initialize_instance_slot($meta_instance, $instance, \%params)
+        $attr->initialize_instance_slot($meta_instance, $instance, \%params);
     }
     return $instance;
 }
@@ -158,62 +216,37 @@ sub get_method_map {
 
 sub add_attribute {
     my $self = shift;
-    $self->SUPER::add_attribute($self->_process_attribute(@_));
+    $self->SUPER::add_attribute(
+        (blessed $_[0] && $_[0]->isa('Class::MOP::Attribute')
+            ? $_[0] 
+            : $self->_process_attribute(@_))    
+    );
 }
 
 sub add_override_method_modifier {
     my ($self, $name, $method, $_super_package) = @_;
+
     (!$self->has_method($name))
         || confess "Cannot add an override method if a local method is already present";
-    # need this for roles ...
-    $_super_package ||= $self->name;
-    my $super = $self->find_next_method_by_name($name);
-    (defined $super)
-        || confess "You cannot override '$name' because it has no super method";
-    $self->add_method($name => Moose::Meta::Method::Overriden->wrap(sub {
-        my @args = @_;
-        no warnings 'redefine';
-        if ($Moose::SUPER_SLOT{$_super_package}) {
-            local *{$Moose::SUPER_SLOT{$_super_package}} = sub { $super->body->(@args) };
-            return $method->(@args);
-        } else {
-            confess "Trying to call override modifier'd method without super()";
-        }
-    }));
+
+    $self->add_method($name => Moose::Meta::Method::Overriden->new(
+        method  => $method,
+        class   => $self,
+        package => $_super_package, # need this for roles
+        name    => $name,
+    ));
 }
 
 sub add_augment_method_modifier {
     my ($self, $name, $method) = @_;
     (!$self->has_method($name))
         || confess "Cannot add an augment method if a local method is already present";
-    my $super = $self->find_next_method_by_name($name);
-    (defined $super)
-        || confess "You cannot augment '$name' because it has no super method";
-    my $_super_package = $super->package_name;
-    # BUT!,... if this is an overriden method ....
-    if ($super->isa('Moose::Meta::Method::Overriden')) {
-        # we need to be sure that we actually
-        # find the next method, which is not
-        # an 'override' method, the reason is
-        # that an 'override' method will not
-        # be the one calling inner()
-        my $real_super = $self->_find_next_method_by_name_which_is_not_overridden($name);
-        $_super_package = $real_super->package_name;
-    }
-    $self->add_method($name => sub {
-        my @args = @_;
-        no warnings 'redefine';
-        if ($Moose::INNER_SLOT{$_super_package}) {
-            local *{$Moose::INNER_SLOT{$_super_package}} = sub {
-                local *{$Moose::INNER_SLOT{$_super_package}} = sub {};
-                $method->(@args);
-            };
-            return $super->body->(@args);
-        }
-        else {
-            return $super->body->(@args);
-        }
-    });
+
+    $self->add_method($name => Moose::Meta::Method::Augmented->new(
+        method  => $method,
+        class   => $self,
+        name    => $name,
+    ));
 }
 
 ## Private Utility methods ...
@@ -271,74 +304,27 @@ sub _fix_metaclass_incompatability {
 # this was crap anyway, see
 # Moose::Util::apply_all_roles
 # instead
-sub _apply_all_roles { die "DEPRECATED" }
-
-my %ANON_CLASSES;
+sub _apply_all_roles { 
+    Carp::croak 'DEPRECATED: use Moose::Util::apply_all_roles($meta, @roles) instead' 
+}
 
 sub _process_attribute {
-    my $self    = shift;
-    my $name    = shift;
-    my %options = ((scalar @_ == 1 && ref($_[0]) eq 'HASH') ? %{$_[0]} : @_);
+    my ( $self, $name, @args ) = @_;
+
+    @args = %{$args[0]} if scalar @args == 1 && ref($args[0]) eq 'HASH';
 
     if ($name =~ /^\+(.*)/) {
-        return $self->_process_inherited_attribute($1, %options);
+        return $self->_process_inherited_attribute($1, @args);
     }
     else {
-        my $attr_metaclass_name;
-        if ($options{metaclass}) {
-            my $metaclass_name = $options{metaclass};
-            eval {
-                my $possible_full_name = 'Moose::Meta::Attribute::Custom::' . $metaclass_name;
-                Class::MOP::load_class($possible_full_name);
-                $metaclass_name = $possible_full_name->can('register_implementation')
-                    ? $possible_full_name->register_implementation
-                    : $possible_full_name;
-            };
-            if ($@) {
-                Class::MOP::load_class($metaclass_name);
-            }
-            $attr_metaclass_name = $metaclass_name;
-        }
-        else {
-            $attr_metaclass_name = $self->attribute_metaclass;
-        }
-
-        if ($options{traits}) {
-
-            my $anon_role_key = join "|" => @{$options{traits}};
-
-            my $class;
-            if (exists $ANON_CLASSES{$anon_role_key} && defined $ANON_CLASSES{$anon_role_key}) {
-                $class = $ANON_CLASSES{$anon_role_key};
-            }
-            else {
-                $class = Moose::Meta::Class->create_anon_class(
-                    superclasses => [ $attr_metaclass_name ]
-                );
-                $ANON_CLASSES{$anon_role_key} = $class;
-                
-                my @traits;
-                foreach my $trait (@{$options{traits}}) {
-                    eval {
-                        my $possible_full_name = 'Moose::Meta::Attribute::Custom::Trait::' . $trait;
-                        Class::MOP::load_class($possible_full_name);
-                        push @traits => $possible_full_name->can('register_implementation')
-                            ? $possible_full_name->register_implementation
-                            : $possible_full_name;
-                    };
-                    if ($@) {
-                        push @traits => $trait;
-                    }
-                }
-                
-                Moose::Util::apply_all_roles($class, @traits);
-            }
-            
-            $attr_metaclass_name = $class->name;
-        }
-
-        return $attr_metaclass_name->new($name, %options);
+        return $self->_process_new_attribute($name, @args);
     }
+}
+
+sub _process_new_attribute {
+    my ( $self, $name, @args ) = @_;
+
+    $self->attribute_metaclass->interpolate_class_and_new($name, @args);
 }
 
 sub _process_inherited_attribute {
@@ -429,6 +415,23 @@ to the L<Class::MOP::Class> documentation.
 =over 4
 
 =item B<initialize>
+
+=item B<create>
+
+Overrides original to accept a list of roles to apply to
+the created class.
+
+   my $metaclass = Moose::Meta::Class->create( 'New::Class', roles => [...] );
+
+=item B<create_anon_class>
+
+Overrides original to support roles and caching.
+
+   my $metaclass = Moose::Meta::Class->create_anon_class(
+       superclasses => ['Foo'],
+       roles        => [qw/Some Roles Go Here/],
+       cache        => 1,
+   );
 
 =item B<make_immutable>
 
