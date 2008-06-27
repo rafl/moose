@@ -6,9 +6,9 @@ use warnings;
 use Sub::Exporter;
 use Scalar::Util 'blessed';
 use Carp         'confess';
-use Class::MOP   ();
+use Class::MOP   0.56;
 
-our $VERSION   = '0.04';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 my @exports = qw[
@@ -18,6 +18,9 @@ my @exports = qw[
     apply_all_roles
     get_all_init_args
     get_all_attribute_values
+    resolve_metatrait_alias
+    resolve_metaclass_alias
+    add_method_modifier
 ];
 
 Sub::Exporter::setup_exporter({
@@ -40,7 +43,7 @@ sub does_role {
     my $meta = find_meta($class_or_obj);
     
     return unless defined $meta;
-
+    return unless $meta->can('does_role');
     return 1 if $meta->does_role($role);
     return;
 }
@@ -118,6 +121,47 @@ sub get_all_init_args {
     };
 }
 
+sub resolve_metatrait_alias {
+    resolve_metaclass_alias( @_, trait => 1 );
+}
+
+sub resolve_metaclass_alias {
+    my ( $type, $metaclass_name, %options ) = @_;
+
+    if ( my $resolved = eval {
+        my $possible_full_name = 'Moose::Meta::' . $type . '::Custom::' . ( $options{trait} ? "Trait::" : "" ) . $metaclass_name;
+
+        Class::MOP::load_class($possible_full_name);
+
+        $possible_full_name->can('register_implementation')
+            ? $possible_full_name->register_implementation
+            : $possible_full_name;
+    } ) {
+        return $resolved;
+    } else {
+        Class::MOP::load_class($metaclass_name);
+        return $metaclass_name;
+    }
+}
+
+sub add_method_modifier {
+    my ( $class_or_obj, $modifier_name, $args ) = @_;
+    my $meta                = find_meta($class_or_obj);
+    my $code                = pop @{$args};
+    my $add_modifier_method = 'add_' . $modifier_name . '_method_modifier';
+    if ( my $method_modifier_type = ref( @{$args}[0] ) ) {
+        if ( $method_modifier_type eq 'Regexp' ) {
+            my @all_methods = $meta->compute_all_applicable_methods;
+            my @matched_methods
+                = grep { $_->{name} =~ @{$args}[0] } @all_methods;
+            $meta->$add_modifier_method( $_->{name}, $code )
+                for @matched_methods;
+        }
+    }
+    else {
+        $meta->$add_modifier_method( $_, $code ) for @{$args};
+    }
+}
 
 1;
 
@@ -188,6 +232,20 @@ Returns the values of the C<$instance>'s fields keyed by the attribute names.
 Returns a hash reference where the keys are all the attributes' C<init_arg>s
 and the values are the instance's fields. Attributes without an C<init_arg>
 will be skipped.
+
+=item B<resolve_metaclass_alias($category, $name, %options)>
+
+=item B<resolve_metatrait_alias($category, $name, %options)>
+
+Resolve a short name like in e.g.
+
+    has foo => (
+        metaclass => "Bar",
+    );
+
+to a full class name.
+
+=item B<add_method_modifier ($class_or_obj, $modifier_name, $args)>
 
 =back
 

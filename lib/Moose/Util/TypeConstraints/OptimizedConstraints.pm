@@ -5,7 +5,7 @@ use warnings;
 
 use Scalar::Util 'blessed', 'looks_like_number';
 
-our $VERSION   = '0.02';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 sub Value { defined($_[0]) && !ref($_[0]) }
@@ -33,6 +33,34 @@ sub FileHandle { ref($_[0]) eq 'GLOB' && Scalar::Util::openhandle($_[0]) or bles
 sub Object { blessed($_[0]) && blessed($_[0]) ne 'Regexp' }
 
 sub Role { blessed($_[0]) && $_[0]->can('does') }
+
+sub ClassName {
+    return 0 if ref($_[0]) || !defined($_[0]) || !length($_[0]);
+
+    # walk the symbol table tree to avoid autovififying
+    # \*{${main::}{"Foo::"}} == \*main::Foo::
+
+    my $pack = \*::;
+    foreach my $part (split('::', $_[0])) {
+        return 0 unless exists ${$$pack}{"${part}::"};
+        $pack = \*{${$$pack}{"${part}::"}};
+    }
+
+    # check for $VERSION or @ISA
+    return 1 if exists ${$$pack}{VERSION}
+             && defined *{${$$pack}{VERSION}}{SCALAR};
+    return 1 if exists ${$$pack}{ISA}
+             && defined *{${$$pack}{ISA}}{ARRAY};
+
+    # check for any method
+    foreach ( keys %{$$pack} ) {
+        next if substr($_, -2, 2) eq '::';
+        return 1 if defined *{${$$pack}{$_}}{CODE};
+    }
+
+    # fail
+    return 0;
+}
 
 # NOTE:
 # we have XS versions too, ...
@@ -86,6 +114,8 @@ no user serviceable parts inside.
 =item Object
 
 =item Role
+
+=item ClassName
 
 =back
 

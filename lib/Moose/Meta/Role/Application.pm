@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use metaclass;
 
-our $VERSION   = '0.01';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 __PACKAGE__->meta->add_attribute('method_exclusions' => (
@@ -68,14 +68,14 @@ sub apply {
     $self->apply_after_method_modifiers(@_);
 }
 
-sub check_role_exclusions           { die "Abstract Method" }
-sub check_required_methods          { die "Abstract Method" }
-sub check_required_attributes       { die "Abstract Method" }
+sub check_role_exclusions           { Carp::croak "Abstract Method" }
+sub check_required_methods          { Carp::croak "Abstract Method" }
+sub check_required_attributes       { Carp::croak "Abstract Method" }
 
-sub apply_attributes                { die "Abstract Method" }
-sub apply_methods                   { die "Abstract Method" }
-sub apply_override_method_modifiers { die "Abstract Method" }
-sub apply_method_modifiers          { die "Abstract Method" }
+sub apply_attributes                { Carp::croak "Abstract Method" }
+sub apply_methods                   { Carp::croak "Abstract Method" }
+sub apply_override_method_modifiers { Carp::croak "Abstract Method" }
+sub apply_method_modifiers          { Carp::croak "Abstract Method" }
 
 sub apply_before_method_modifiers   { (shift)->apply_method_modifiers('before' => @_) }
 sub apply_around_method_modifiers   { (shift)->apply_method_modifiers('around' => @_) }

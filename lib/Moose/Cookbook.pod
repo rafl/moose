@@ -50,17 +50,21 @@ More type examples, including the use of type coercions.
 Demonstrates the use of C<augment> method modifiers, a way of turning
 the usual method overriding style "inside-out".
 
-=item L<Moose::Cookbook::Recipe7> - Making Moose fast with immutable (TODO)
+=item L<Moose::Cookbook::Recipe7> - Making Moose fast with immutable
+
+Making a class immutable greatly increases the speed of accessors and
+object construction.
+
+=item L<Moose::Cookbook::Recipe8> - Managing complex relations with trigger (TODO)
 
 I<abstract goes here>
 
-=item L<Moose::Cookbook::Recipe8> - ??
+Work off of this http://code2.0beta.co.uk/moose/svn/Moose/trunk/t/200_examples/007_Child_Parent_attr_inherit.t
 
-I<abstract goes here>
+=item L<Moose::Cookbook::Recipe9> - Builder methods and lazy_build
 
-=item L<Moose::Cookbook::Recipe9> - ?? 
-
-I<abstract goes here>
+The builder feature provides an inheritable and role-composable way to
+provide a default attribute value.
 
 =back
 
@@ -74,9 +78,12 @@ Demonstrates roles, which are also sometimes known as traits or
 mix-ins. Roles provide a method of code re-use which is orthogonal to
 subclassing.
 
-=item L<Moose::Cookbook::Recipe11> - Advanced Role Composition (TODO)
+=item L<Moose::Cookbook::Recipe11> - Advanced Role Composition - method exclusion and aliasing
 
-I<abstract goes here>
+Sometimes you just want to include part of a role in your
+class. Sometimes you want the whole role but one if its methods
+conflicts with one in your class. With method exclusion and aliasing,
+you can work around these problems.
 
 =item L<Moose::Cookbook::Recipe12> - Runtime Role Composition (TODO)
 
@@ -99,9 +106,12 @@ metaclasses. Attribute metaclasses let you extend attribute
 declarations (with C<has>) and behavior to provide additional
 attribute functionality.
 
-=item L<Moose::Cookbook::Recipe22> - The meta-attribute trait example (TODO)
+=item L<Moose::Cookbook::Recipe22> - The meta-attribute trait example
 
-I<abstract goes here>
+Extending Moose's attribute metaclass is a great way to add
+functionality. However, attributes can only have one metaclass.
+Applying roles to the attribute metaclass lets you provide
+composable attribute functionality.
 
 =item L<Moose::Cookbook::Recipe23> - The meta-instance example (TODO)
 

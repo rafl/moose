@@ -4,15 +4,15 @@ package Moose::Meta::Attribute;
 use strict;
 use warnings;
 
-use Scalar::Util 'blessed', 'weaken', 'reftype';
+use Scalar::Util 'blessed', 'weaken';
 use Carp         'confess';
-use Sub::Name    'subname';
 use overload     ();
 
-our $VERSION   = '0.22';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use Moose::Meta::Method::Accessor;
+use Moose::Util ();
 use Moose::Util::TypeConstraints ();
 
 use base 'Class::MOP::Attribute';
@@ -46,99 +46,195 @@ __PACKAGE__->meta->add_attribute('documentation' => (
     reader    => 'documentation',
     predicate => 'has_documentation',
 ));
+__PACKAGE__->meta->add_attribute('traits' => (
+    reader    => 'applied_traits',
+    predicate => 'has_applied_traits',
+));
 
-# NOTE:
 # we need to have a ->does method in here to 
 # more easily support traits, and the introspection 
-# of those traits. So in order to do this we 
-# just alias Moose::Object's version of it.
-# - SL
-*does = \&Moose::Object::does;
+# of those traits. We extend the does check to look
+# for metatrait aliases.
+sub does {
+    my ($self, $role_name) = @_;
+    my $name = eval {
+        Moose::Util::resolve_metatrait_alias(Attribute => $role_name)
+    };
+    return 0 if !defined($name); # failed to load class
+    return Moose::Object::does($self, $name);
+}
 
 sub new {
     my ($class, $name, %options) = @_;
-    $class->_process_options($name, \%options);
+    $class->_process_options($name, \%options) unless $options{__hack_no_process_options}; # used from clone()... YECHKKK FIXME ICKY YUCK GROSS
     return $class->SUPER::new($name, %options);
+}
+
+sub interpolate_class_and_new {
+    my ($class, $name, @args) = @_;
+
+    my ( $new_class, @traits ) = $class->interpolate_class(@args);
+    
+    $new_class->new($name, @args, ( scalar(@traits) ? ( traits => \@traits ) : () ) );
+}
+
+sub interpolate_class {
+    my ($class, %options) = @_;
+
+    $class = ref($class) || $class;
+
+    if ( my $metaclass_name = delete $options{metaclass} ) {
+        my $new_class = Moose::Util::resolve_metaclass_alias( Attribute => $metaclass_name );
+        
+        if ( $class ne $new_class ) {
+            if ( $new_class->can("interpolate_class") ) {
+                return $new_class->interpolate_class(%options);
+            } else {
+                $class = $new_class;
+            }
+        }
+    }
+
+    my @traits;
+
+    if (my $traits = $options{traits}) {
+        if ( @traits = grep { not $class->does($_) } map {
+            Moose::Util::resolve_metatrait_alias( Attribute => $_ )
+                or
+            $_
+        } @$traits ) {
+            my $anon_class = Moose::Meta::Class->create_anon_class(
+                superclasses => [ $class ],
+                roles        => [ @traits ],
+                cache        => 1,
+            );
+
+            $class = $anon_class->name;
+        }
+    }
+
+    return ( wantarray ? ( $class, @traits ) : $class );
 }
 
 sub clone_and_inherit_options {
     my ($self, %options) = @_;
-    # you can change default, required, coerce, documentation and lazy
+    my %copy = %options;
+    # you can change default, required, coerce, documentation, lazy, handles, builder, type_constraint (explicitly or using isa/does), metaclass and traits
     my %actual_options;
-    foreach my $legal_option (qw(default coerce required documentation lazy)) {
+    foreach my $legal_option (qw(default coerce required documentation lazy handles builder type_constraint)) {
         if (exists $options{$legal_option}) {
             $actual_options{$legal_option} = $options{$legal_option};
             delete $options{$legal_option};
         }
     }
 
-    # handles can only be added, not changed
-    if ($options{handles}) {
-        confess "You can only add the 'handles' option, you cannot change it"
-            if $self->has_handles;
-        $actual_options{handles} = $options{handles};
-        delete $options{handles};
-    }
-    
-    # handles can only be added, not changed
-    if ($options{builder}) {
-        confess "You can only add the 'builder' option, you cannot change it"
-            if $self->has_builder;
-        $actual_options{builder} = $options{builder};
-        delete $options{builder};
-    }    
-
-    # isa can be changed, but only if the
-    # new type is a subtype
     if ($options{isa}) {
         my $type_constraint;
         if (blessed($options{isa}) && $options{isa}->isa('Moose::Meta::TypeConstraint')) {
             $type_constraint = $options{isa};
         }
         else {
-            $type_constraint = Moose::Util::TypeConstraints::find_or_create_type_constraint(
-                $options{isa}
-            );
+            $type_constraint = Moose::Util::TypeConstraints::find_or_create_isa_type_constraint($options{isa});
             (defined $type_constraint)
                 || confess "Could not find the type constraint '" . $options{isa} . "'";
         }
-        # NOTE:
-        # check here to see if the new type
-        # is a subtype of the old one
-        # or if the old one is a union and the
-        # subtype (or a supertype of it) is included
-        # in the union
-        $type_constraint->is_subtype_of($self->type_constraint->name)
-            || ($self->type_constraint->can('includes_type') && $self->type_constraint->includes_type($type_constraint))
-                || confess "New type constraint setting must be a subtype of inherited one" . ($self->type_constraint->can('includes_type') ? ", or included in the inherited constraint" : '')
-                    # iff we have a type constraint that is ...
-                    if $self->has_type_constraint;
-        # then we use it :)
+
         $actual_options{type_constraint} = $type_constraint;
         delete $options{isa};
     }
+    
+    if ($options{does}) {
+        my $type_constraint;
+        if (blessed($options{does}) && $options{does}->isa('Moose::Meta::TypeConstraint')) {
+            $type_constraint = $options{does};
+        }
+        else {
+            $type_constraint = Moose::Util::TypeConstraints::find_or_create_does_type_constraint($options{does});
+            (defined $type_constraint)
+                || confess "Could not find the type constraint '" . $options{does} . "'";
+        }
+
+        $actual_options{type_constraint} = $type_constraint;
+        delete $options{does};
+    }    
+
+    # NOTE:
+    # this doesn't apply to Class::MOP::Attributes, 
+    # so we can ignore it for them.
+    # - SL
+    if ($self->can('interpolate_class')) {
+        ( $actual_options{metaclass}, my @traits ) = $self->interpolate_class(%options);
+
+        my %seen;
+        my @all_traits = grep { $seen{$_}++ } @{ $self->applied_traits || [] }, @traits;
+        $actual_options{traits} = \@all_traits if @all_traits;
+
+        delete @options{qw(metaclass traits)};
+    }
+
     (scalar keys %options == 0)
         || confess "Illegal inherited options => (" . (join ', ' => keys %options) . ")";
+
+
     $self->clone(%actual_options);
+}
+
+sub clone {
+    my ( $self, %params ) = @_;
+
+    my $class = $params{metaclass} || ref $self;
+
+    if ( 0 and $class eq ref $self ) {
+        return $self->SUPER::clone(%params);
+    } else {
+        my ( @init, @non_init );
+
+        foreach my $attr ( grep { $_->has_value($self) } $self->meta->compute_all_applicable_attributes ) {
+            push @{ $attr->has_init_arg ? \@init : \@non_init }, $attr;
+        }
+
+        my %new_params = ( ( map { $_->init_arg => $_->get_value($self) } @init ), %params );
+
+        my $name = delete $new_params{name};
+
+        my $clone = $class->new($name, %new_params, __hack_no_process_options => 1 );
+
+        foreach my $attr ( @non_init ) {
+            $attr->set_value($clone, $attr->get_value($self));
+        }
+
+
+        return $clone;
+    }
 }
 
 sub _process_options {
     my ($class, $name, $options) = @_;
 
     if (exists $options->{is}) {
+
+        ### -------------------------
+        ## is => ro, writer => _foo    # turns into (reader => foo, writer => _foo) as before
+        ## is => rw, writer => _foo    # turns into (reader => foo, writer => _foo)
+        ## is => rw, accessor => _foo  # turns into (accessor => _foo)
+        ## is => ro, accessor => _foo  # error, accesor is rw
+        ### -------------------------
+        
         if ($options->{is} eq 'ro') {
+            confess "Cannot define an accessor name on a read-only attribute, accessors are read/write"
+                if exists $options->{accessor};
             $options->{reader} ||= $name;
-            (!exists $options->{trigger})
-                || confess "Cannot have a trigger on a read-only attribute";
         }
         elsif ($options->{is} eq 'rw') {
-            $options->{accessor} = $name;
-            ((reftype($options->{trigger}) || '') eq 'CODE')
-                || confess "Trigger must be a CODE ref"
-                    if exists $options->{trigger};
+            if ($options->{writer}) {
+                $options->{reader} ||= $name;
+            }
+            else {
+                $options->{accessor} ||= $name;
+            }
         }
         else {
-            confess "I do not understand this option (is => " . $options->{is} . ")"
+            confess "I do not understand this option (is => " . $options->{is} . ") on attribute ($name)"
         }
     }
 
@@ -146,10 +242,10 @@ sub _process_options {
         if (exists $options->{does}) {
             if (eval { $options->{isa}->can('does') }) {
                 ($options->{isa}->does($options->{does}))
-                    || confess "Cannot have an isa option and a does option if the isa does not do the does";
+                    || confess "Cannot have an isa option and a does option if the isa does not do the does on attribute ($name)";
             }
             else {
-                confess "Cannot have an isa option which cannot ->does()";
+                confess "Cannot have an isa option which cannot ->does() on attribute ($name)";
             }
         }
 
@@ -158,12 +254,7 @@ sub _process_options {
             $options->{type_constraint} = $options->{isa};
         }
         else {
-            $options->{type_constraint} = Moose::Util::TypeConstraints::find_or_create_type_constraint(
-                $options->{isa} => {
-                    parent     => Moose::Util::TypeConstraints::find_type_constraint('Object'),
-                    constraint => sub { $_[0]->isa($options->{isa}) }
-                }
-            );
+            $options->{type_constraint} = Moose::Util::TypeConstraints::find_or_create_isa_type_constraint($options->{isa});
         }
     }
     elsif (exists $options->{does}) {
@@ -172,34 +263,32 @@ sub _process_options {
                 $options->{type_constraint} = $options->{does};
         }
         else {
-            $options->{type_constraint} = Moose::Util::TypeConstraints::find_or_create_type_constraint(
-                $options->{does} => {
-                    parent     => Moose::Util::TypeConstraints::find_type_constraint('Role'),
-                    constraint => sub { 
-                        Moose::Util::does_role($_[0], $options->{does})
-                    }
-                }
-            );
+            $options->{type_constraint} = Moose::Util::TypeConstraints::find_or_create_does_type_constraint($options->{does});
         }
     }
 
     if (exists $options->{coerce} && $options->{coerce}) {
         (exists $options->{type_constraint})
-            || confess "You cannot have coercion without specifying a type constraint";
-        confess "You cannot have a weak reference to a coerced value"
+            || confess "You cannot have coercion without specifying a type constraint on attribute ($name)";
+        confess "You cannot have a weak reference to a coerced value on attribute ($name)"
             if $options->{weak_ref};
+    }
+
+    if (exists $options->{trigger}) {
+        ('CODE' eq ref $options->{trigger})
+            || confess "Trigger must be a CODE ref on attribute ($name)";
     }
 
     if (exists $options->{auto_deref} && $options->{auto_deref}) {
         (exists $options->{type_constraint})
-            || confess "You cannot auto-dereference without specifying a type constraint";
+            || confess "You cannot auto-dereference without specifying a type constraint on attribute ($name)";
         ($options->{type_constraint}->is_a_type_of('ArrayRef') ||
          $options->{type_constraint}->is_a_type_of('HashRef'))
-            || confess "You cannot auto-dereference anything other than a ArrayRef or HashRef";
+            || confess "You cannot auto-dereference anything other than a ArrayRef or HashRef on attribute ($name)";
     }
 
     if (exists $options->{lazy_build} && $options->{lazy_build} == 1) {
-        confess("You can not use lazy_build and default for the same attribute")
+        confess("You can not use lazy_build and default for the same attribute ($name)")
             if exists $options->{default};
         $options->{lazy}      = 1;
         $options->{required}  = 1;
@@ -216,11 +305,11 @@ sub _process_options {
 
     if (exists $options->{lazy} && $options->{lazy}) {
         (exists $options->{default} || defined $options->{builder} )
-            || confess "You cannot have lazy attribute without specifying a default value for it";
+            || confess "You cannot have lazy attribute ($name) without specifying a default value for it";
     }
 
     if ( $options->{required} && !( ( !exists $options->{init_arg} || defined $options->{init_arg} ) || exists $options->{default} || defined $options->{builder} ) ) {
-        confess "You cannot have a required attribute without a default, builder, or an init_arg";
+        confess "You cannot have a required attribute ($name) without a default, builder, or an init_arg";
     }
 
 }
@@ -321,13 +410,13 @@ sub _set_initial_slot_value {
 }
 
 sub set_value {
-    my ($self, $instance, $value) = @_;
+    my ($self, $instance, @args) = @_;
+    my $value = $args[0];
 
     my $attr_name = $self->name;
 
-    if ($self->is_required) {
-        defined($value)
-            || confess "Attribute ($attr_name) is required, so cannot be set to undef";
+    if ($self->is_required and not @args) {
+        confess "Attribute ($attr_name) is required";
     }
 
     if ($self->has_type_constraint) {
@@ -366,11 +455,10 @@ sub get_value {
             if ($self->has_default) {
                 my $default = $self->default($instance);
                 $self->set_initial_value($instance, $default);
-            }
-            if ( $self->has_builder ){
+            } elsif ( $self->has_builder ) {
                 if (my $builder = $instance->can($self->builder)){
                     $self->set_initial_value($instance, $instance->$builder);
-                } 
+                }
                 else {
                     confess(blessed($instance) 
                           . " does not support builder method '"
@@ -418,67 +506,68 @@ sub accessor_metaclass { 'Moose::Meta::Method::Accessor' }
 sub install_accessors {
     my $self = shift;
     $self->SUPER::install_accessors(@_);
+    $self->install_delegation if $self->has_handles;
+    return;
+}
 
-    if ($self->has_handles) {
+sub install_delegation {
+    my $self = shift;
+
+    # NOTE:
+    # Here we canonicalize the 'handles' option
+    # this will sort out any details and always
+    # return an hash of methods which we want
+    # to delagate to, see that method for details
+    my %handles = $self->_canonicalize_handles();
+
+    # find the accessor method for this attribute
+    my $accessor = $self->get_read_method_ref;
+    # then unpack it if we need too ...
+    $accessor = $accessor->body if blessed $accessor;
+
+    # install the delegation ...
+    my $associated_class = $self->associated_class;
+    foreach my $handle (keys %handles) {
+        my $method_to_call = $handles{$handle};
+        my $class_name = $associated_class->name;
+        my $name = "${class_name}::${handle}";
+
+        (!$associated_class->has_method($handle))
+            || confess "You cannot overwrite a locally defined method ($handle) with a delegation";
 
         # NOTE:
-        # Here we canonicalize the 'handles' option
-        # this will sort out any details and always
-        # return an hash of methods which we want
-        # to delagate to, see that method for details
-        my %handles = $self->_canonicalize_handles();
+        # handles is not allowed to delegate
+        # any of these methods, as they will
+        # override the ones in your class, which
+        # is almost certainly not what you want.
 
-        # find the accessor method for this attribute
-        my $accessor = $self->get_read_method_ref;
-        # then unpack it if we need too ...
-        $accessor = $accessor->body if blessed $accessor;
+        # FIXME warn when $handle was explicitly specified, but not if the source is a regex or something
+        #cluck("Not delegating method '$handle' because it is a core method") and
+        next if $class_name->isa("Moose::Object") and $handle =~ /^BUILD|DEMOLISH$/ || Moose::Object->can($handle);
 
-        # install the delegation ...
-        my $associated_class = $self->associated_class;
-        foreach my $handle (keys %handles) {
-            my $method_to_call = $handles{$handle};
-            my $class_name = $associated_class->name;
-            my $name = "${class_name}::${handle}";
-
-            (!$associated_class->has_method($handle))
-                || confess "You cannot overwrite a locally defined method ($handle) with a delegation";
-
-            # NOTE:
-            # handles is not allowed to delegate
-            # any of these methods, as they will
-            # override the ones in your class, which
-            # is almost certainly not what you want.
-
-            # FIXME warn when $handle was explicitly specified, but not if the source is a regex or something
-            #cluck("Not delegating method '$handle' because it is a core method") and
-            next if $class_name->isa("Moose::Object") and $handle =~ /^BUILD|DEMOLISH$/ || Moose::Object->can($handle);
-
-            if ((reftype($method_to_call) || '') eq 'CODE') {
-                $associated_class->add_method($handle => subname $name, $method_to_call);
-            }
-            else {
-                # NOTE:
-                # we used to do a goto here, but the
-                # goto didn't handle failure correctly
-                # (it just returned nothing), so I took 
-                # that out. However, the more I thought
-                # about it, the less I liked it doing 
-                # the goto, and I prefered the act of 
-                # delegation being actually represented
-                # in the stack trace. 
-                # - SL
-                $associated_class->add_method($handle => subname $name, sub {
-                    my $proxy = (shift)->$accessor();
-                    (defined $proxy) 
-                        || confess "Cannot delegate $handle to $method_to_call because " . 
-                                   "the value of " . $self->name . " is not defined";
-                    $proxy->$method_to_call(@_);
-                });
-            }
+        if ('CODE' eq ref($method_to_call)) {
+            $associated_class->add_method($handle => Class::MOP::subname($name, $method_to_call));
         }
-    }
-
-    return;
+        else {
+            # NOTE:
+            # we used to do a goto here, but the
+            # goto didn't handle failure correctly
+            # (it just returned nothing), so I took 
+            # that out. However, the more I thought
+            # about it, the less I liked it doing 
+            # the goto, and I prefered the act of 
+            # delegation being actually represented
+            # in the stack trace. 
+            # - SL
+            $associated_class->add_method($handle => Class::MOP::subname($name, sub {
+                my $proxy = (shift)->$accessor();
+                (defined $proxy) 
+                    || confess "Cannot delegate $handle to $method_to_call because " . 
+                               "the value of " . $self->name . " is not defined";
+                $proxy->$method_to_call(@_);
+            }));
+        }
+    }    
 }
 
 # private methods to help delegation ...
@@ -560,6 +649,9 @@ sub _get_delegate_method_list {
     }
 }
 
+package Moose::Meta::Attribute::Custom::Moose;
+sub register_implementation { 'Moose::Meta::Attribute' }
+
 1;
 
 __END__
@@ -592,11 +684,15 @@ will behave just as L<Class::MOP::Attribute> does.
 
 =item B<new>
 
+=item B<clone>
+
 =item B<does>
 
 =item B<initialize_instance_slot>
 
 =item B<install_accessors>
+
+=item B<install_delegation>
 
 =item B<accessor_metaclass>
 
@@ -631,6 +727,13 @@ Moose attributes support type-constraint checking, weak reference
 creation and type coercion.
 
 =over 4
+
+=item B<interpolate_class_and_new>
+
+=item B<interpolate_class>
+
+When called as a class method causes interpretation of the C<metaclass> and
+C<traits> options.
 
 =item B<clone_and_inherit_options>
 
@@ -730,6 +833,15 @@ in some kind of automated documentation system perhaps.
 =item B<has_documentation>
 
 Returns true if this meta-attribute has any documentation.
+
+=item B<applied_traits>
+
+This will return the ARRAY ref of all the traits applied to this 
+attribute, or if no traits have been applied, it returns C<undef>.
+
+=item B<has_applied_traits>
+
+Returns true if this meta-attribute has any traits applied.
 
 =back
 

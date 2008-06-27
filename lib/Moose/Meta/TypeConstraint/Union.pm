@@ -7,7 +7,7 @@ use metaclass;
 
 use Moose::Meta::TypeCoercion::Union;
 
-our $VERSION   = '0.06';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::TypeConstraint';
@@ -40,6 +40,36 @@ sub new {
     return $self;
 }
 
+sub equals {
+    my ( $self, $type_or_name ) = @_;
+
+    my $other = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
+
+    return unless $other->isa(__PACKAGE__);
+
+    my @self_constraints  = @{ $self->type_constraints };
+    my @other_constraints = @{ $other->type_constraints };
+
+    return unless @self_constraints == @other_constraints;
+
+    # FIXME presort type constraints for efficiency?
+    constraint: foreach my $constraint ( @self_constraints ) {
+        for ( my $i = 0; $i < @other_constraints; $i++ ) {
+            if ( $constraint->equals($other_constraints[$i]) ) {
+                splice @other_constraints, $i, 1;
+                next constraint;
+            }
+        }
+    }
+
+    return @other_constraints == 0;
+}
+
+sub parents {
+    my $self = shift;
+    $self->type_constraints;
+}
+
 sub validate {
     my ($self, $value) = @_;
     my $message;
@@ -66,31 +96,6 @@ sub is_subtype_of {
         return 1 if $type->is_subtype_of($type_name);
     }
     return 0;
-}
-
-sub includes_type {
-    my ($self, $type) = @_;
-
-    my $has_type = sub {
-        my $subtype = shift;
-
-        for my $type (@{ $self->type_constraints }) {
-            return 1 if $subtype->is_a_type_of($type);
-        }
-
-        return 0;
-    };
-
-    if ($type->isa('Moose::Meta::TypeConstraint::Union')) {
-        for my $t (@{ $type->type_constraints }) {
-            return 0 unless $has_type->($t);
-        }
-    }
-    else {
-        return 0 unless $has_type->($type);
-    }
-
-    return 1;
 }
 
 1;
@@ -126,9 +131,13 @@ but it does provide the same API
 
 =item B<type_constraints>
 
+=item B<parents>
+
 =item B<constraint>
 
 =item B<includes_type>
+
+=item B<equals>
 
 =back
 

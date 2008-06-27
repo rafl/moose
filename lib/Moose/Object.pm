@@ -9,25 +9,32 @@ use if ( not our $__mx_is_compiled ), metaclass => 'Moose::Meta::Class';
 
 use Carp 'confess';
 
-our $VERSION   = '0.11';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 sub new {
     my $class = shift;
-    my %params;
+    my $params = $class->BUILDARGS(@_);
+    my $self = $class->meta->new_object(%$params);
+    $self->BUILDALL($params);
+    return $self;
+}
+
+sub BUILDARGS {
+    my $class = shift;
+
     if (scalar @_ == 1) {
         if (defined $_[0]) {
+            no warnings 'uninitialized';
             (ref($_[0]) eq 'HASH')
                 || confess "Single parameters to new() must be a HASH ref";
-            %params = %{$_[0]};
+            return {%{$_[0]}};
+        } else {
+            return {}; # FIXME this is compat behavior, but is it correct?
         }
+    } else {
+        return {@_};
     }
-    else {
-        %params = @_;
-    }
-    my $self = $class->meta->new_object(%params);
-    $self->BUILDALL(\%params);
-    return $self;
 }
 
 sub BUILDALL {
@@ -37,29 +44,41 @@ sub BUILDALL {
     return unless $_[0]->can('BUILD');    
     my ($self, $params) = @_;
     foreach my $method (reverse $self->meta->find_all_methods_by_name('BUILD')) {
-        $method->{code}->($self, $params);
+        $method->{code}->body->($self, $params);
     }
 }
 
 sub DEMOLISHALL {
+    my $self = shift;    
+    foreach my $method ($self->meta->find_all_methods_by_name('DEMOLISH')) {
+        $method->{code}->body->($self);
+    }
+}
+
+sub DESTROY { 
     # NOTE: we ask Perl if we even 
     # need to do this first, to avoid
     # extra meta level calls    
-    return unless $_[0]->can('DEMOLISH');    
-    my $self = shift;    
-    foreach my $method ($self->meta->find_all_methods_by_name('DEMOLISH')) {
-        $method->{code}->($self);
-    }    
+    return unless $_[0]->can('DEMOLISH');
+    # if we have an exception here ...
+    if ($@) {
+        # localize the $@ ...
+        local $@;
+        # run DEMOLISHALL ourselves, ...
+        $_[0]->DEMOLISHALL;
+        # and return ...
+        return;
+    }
+    # otherwise it is normal destruction
+    $_[0]->DEMOLISHALL;
 }
-
-sub DESTROY { goto &DEMOLISHALL }
 
 # new does() methods will be created 
 # as approiate see Moose::Meta::Role
 sub does {
     my ($self, $role_name) = @_;
     (defined $role_name)
-        || confess "You much supply a role name to does()";
+        || confess "You must supply a role name to does()";
     my $meta = $self->meta;
     foreach my $class ($meta->class_precedence_list) {
         my $m = $meta->initialize($class);
@@ -116,7 +135,12 @@ This will return the metaclass associated with the given class.
 
 =item B<new>
 
-This will create a new instance and call C<BUILDALL>.
+This will call C<BUILDARGS>, create a new instance and call C<BUILDALL>.
+
+=item B<BUILDARGS>
+
+This method processes an argument list into a hash reference. It is used by
+C<new>.
 
 =item B<BUILDALL>
 

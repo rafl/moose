@@ -8,7 +8,7 @@ use Scalar::Util 'blessed';
 use Carp         'confess';
 use Moose::Util::TypeConstraints;
 
-our $VERSION   = '0.02';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::TypeConstraint';
@@ -17,6 +17,20 @@ __PACKAGE__->meta->add_attribute('type_parameter' => (
     accessor  => 'type_parameter',
     predicate => 'has_type_parameter',
 ));
+
+sub equals {
+    my ( $self, $type_or_name ) = @_;
+
+    my $other = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
+
+    return unless $other->isa(__PACKAGE__);
+    
+    return (
+        $self->type_parameter->equals( $other->type_parameter )
+            and
+        $self->parent->equals( $other->parent )
+    );
+}
 
 sub compile_type_constraint {
     my $self = shift;
@@ -64,6 +78,8 @@ Moose::Meta::TypeConstraint::Parameterized - Higher Order type constraints for M
 =item B<has_type_parameter>
 
 =item B<meta>
+
+=item B<equals>
 
 =back
 

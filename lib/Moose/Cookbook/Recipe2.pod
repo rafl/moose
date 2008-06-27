@@ -86,8 +86,8 @@ Up until now, we have only had C<Int> type constraints, which
 (as I said in the first recipe) is a builtin type constraint 
 that Moose provides for you. The C<BankAccount> type constraint 
 is new, and was actually defined the moment we created the 
-B<BankAccount> class itself. In fact, for every Moose class that 
-you define, a corresponding type constraint will be created. This
+B<BankAccount> class itself. In fact, for every class in 
+your program, a corresponding type constraint will be created. This
 means that in the first recipe, both C<Point> and C<Point3D> type
 constraints were created, and in this recipe, both C<BankAccount>
 and C<CheckingAccount> type constraints were created. Moose does
@@ -155,7 +155,7 @@ normal process, here is an example:
   					     );
 
 And as with the first recipe, a more in-depth example of using 
-these classes can be found in the F<t/002_recipe.t> test file.
+these classes can be found in the F<t/000_recipes/002_recipe.t> test file.
 
 =head1 CONCLUSION
 

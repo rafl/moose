@@ -7,7 +7,7 @@ use warnings;
 use Carp         'confess';
 use Scalar::Util 'blessed', 'weaken', 'looks_like_number';
 
-our $VERSION   = '0.09';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::Method',
@@ -20,9 +20,14 @@ sub new {
     (exists $options{options} && ref $options{options} eq 'HASH')
         || confess "You must pass a hash of options";
 
+    ($options{package_name} && $options{name})
+        || confess "You must supply the package_name and name parameters $Class::MOP::Method::UPGRADE_ERROR_TEXT";
+
     my $self = bless {
         # from our superclass
-        '&!body'          => undef,
+        '&!body'          => undef, 
+        '$!package_name'  => $options{package_name},
+        '$!name'          => $options{name},
         # specific to this subclass
         '%!options'       => $options{options},
         '$!meta_instance' => $options{metaclass}->get_meta_instance,
@@ -36,7 +41,7 @@ sub new {
     # needed
     weaken($self->{'$!associated_metaclass'});
 
-    $self->intialize_body;
+    $self->initialize_body;
 
     return $self;
 }
@@ -51,7 +56,11 @@ sub associated_metaclass { (shift)->{'$!associated_metaclass'} }
 
 ## method
 
-sub intialize_body {
+# this was changed in 0.41, but broke MooseX::Singleton, so try to catch
+# any other code using the original broken spelling
+sub intialize_body { confess "Please correct the spelling of 'intialize_body' to 'initialize_body'" }
+
+sub initialize_body {
     my $self = shift;
     # TODO:
     # the %options should also include a both
@@ -66,14 +75,15 @@ sub intialize_body {
     $source .= "\n" . 'return $class->Moose::Object::new(@_)';
     $source .= "\n" . '    if $class ne \'' . $self->associated_metaclass->name . '\';';
 
-    $source .= "\n" . 'my %params = (scalar @_ == 1) ? %{$_[0]} : @_;';
+    $source .= "\n" . 'my $params = ' . $self->_generate_BUILDARGS('$class', '@_');
 
-    $source .= "\n" . 'my $instance = ' . $self->meta_instance->inline_create_instance('$class');
+    $source .= ";\n" . 'my $instance = ' . $self->meta_instance->inline_create_instance('$class');
 
     $source .= ";\n" . (join ";\n" => map {
         $self->_generate_slot_initializer($_)
     } 0 .. (@{$self->attributes} - 1));
 
+    $source .= ";\n" . $self->_generate_triggers();    
     $source .= ";\n" . $self->_generate_BUILDALL();
 
     $source .= ";\n" . 'return $instance';
@@ -110,13 +120,58 @@ sub intialize_body {
     $self->{'&!body'} = $code;
 }
 
+sub _generate_BUILDARGS {
+    my ( $self, $class, $args ) = @_;
+
+    my $buildargs = $self->associated_metaclass->find_method_by_name("BUILDARGS");
+
+    if ( $args eq '@_' and ( !$buildargs or $buildargs->body == \&Moose::Object::BUILDARGS ) ) {
+        return join("\n",
+            'do {',
+            'no warnings "uninitialized";',
+            'confess "Single parameters to new() must be a HASH ref"',
+            '    if scalar @_ == 1 && defined $_[0] && ref($_[0]) ne q{HASH};',
+            '(scalar @_ == 1) ? {%{$_[0]}} : {@_};',
+            '}',
+        );
+    } else {
+        return $class . "->BUILDARGS($args)";
+    }
+}
+
 sub _generate_BUILDALL {
     my $self = shift;
     my @BUILD_calls;
     foreach my $method (reverse $self->associated_metaclass->find_all_methods_by_name('BUILD')) {
-        push @BUILD_calls => '$instance->' . $method->{class} . '::BUILD(\%params)';
+        push @BUILD_calls => '$instance->' . $method->{class} . '::BUILD($params)';
     }
     return join ";\n" => @BUILD_calls;
+}
+
+sub _generate_triggers {
+    my $self = shift;
+    my @trigger_calls;
+    foreach my $i (0 .. $#{ $self->attributes }) {
+        my $attr = $self->attributes->[$i];
+        if ($attr->can('has_trigger') && $attr->has_trigger) {
+            if (defined(my $init_arg = $attr->init_arg)) {
+                push @trigger_calls => (
+                    '(exists $params->{\'' . $init_arg . '\'}) && do {' . "\n    "
+                    .   '$attrs->[' . $i . ']->trigger->('
+                    .       '$instance, ' 
+                    .        $self->meta_instance->inline_get_slot_value(
+                                 '$instance',
+                                 ("'" . $attr->name . "'")
+                             ) 
+                             . ', '
+                    .        '$attrs->[' . $i . ']'
+                    .   ');'
+                    ."\n}"
+                );
+            } 
+        }
+    }
+    return join ";\n" => @trigger_calls;    
 }
 
 sub _generate_slot_initializer {
@@ -130,16 +185,16 @@ sub _generate_slot_initializer {
     my $is_moose = $attr->isa('Moose::Meta::Attribute'); # XXX FIXME
 
     if ($is_moose && defined($attr->init_arg) && $attr->is_required && !$attr->has_default && !$attr->has_builder) {
-        push @source => ('(exists $params{\'' . $attr->init_arg . '\'}) ' .
+        push @source => ('(exists $params->{\'' . $attr->init_arg . '\'}) ' .
                         '|| confess "Attribute (' . $attr->name . ') is required";');
     }
 
     if (($attr->has_default || $attr->has_builder) && !($is_moose && $attr->is_lazy)) {
 
         if ( defined( my $init_arg = $attr->init_arg ) ) {
-            push @source => 'if (exists $params{\'' . $init_arg . '\'}) {';
+            push @source => 'if (exists $params->{\'' . $init_arg . '\'}) {';
 
-                push @source => ('my $val = $params{\'' . $init_arg . '\'};');
+                push @source => ('my $val = $params->{\'' . $init_arg . '\'};');
 
                 if ($is_moose && $attr->has_type_constraint) {
                     if ($attr->should_coerce && $attr->type_constraint->has_coercion) {
@@ -185,9 +240,9 @@ sub _generate_slot_initializer {
         push @source => "}" if defined $attr->init_arg;
     }
     elsif ( defined( my $init_arg = $attr->init_arg ) ) {
-        push @source => '(exists $params{\'' . $init_arg . '\'}) && do {';
+        push @source => '(exists $params->{\'' . $init_arg . '\'}) && do {';
 
-            push @source => ('my $val = $params{\'' . $init_arg . '\'};');
+            push @source => ('my $val = $params->{\'' . $init_arg . '\'};');
             if ($is_moose && $attr->has_type_constraint) {
                 if ($attr->should_coerce && $attr->type_constraint->has_coercion) {
                     push @source => $self->_generate_type_coercion(
@@ -315,7 +370,7 @@ not particularly useful.
 
 =item B<options>
 
-=item B<intialize_body>
+=item B<initialize_body>
 
 =item B<associated_metaclass>
 

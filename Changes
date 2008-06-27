@@ -1,7 +1,259 @@
 Revision history for Perl extension Moose
 
-0.41
+0.52
+
+
+0.51 Thurs. Jun 26, 2008
+    * Moose::Role
+      - add unimport so "no Moose::Role" actually does
+        something (sartak)
+
+    * Moose::Meta::Role::Application::ToRole
+      - when RoleA did RoleB, and RoleA aliased a method from RoleB in
+        order to provide its own implementation, that method still got
+        added to the list of required methods for consumers of
+        RoleB. Now an aliased method is only added to the list of
+        required methods if the role doing the aliasing does not
+        provide its own implementation. See Recipe 11 for an example
+        of all this. (Dave Rolsky)
+        - added tests for this
+
+    * Moose::Meta::Method::Constructor
+      - when a single argument that wasn't a hashref was provided to
+        an immutabilized constructor, the error message was very
+        unhelpful, as opposed to the non-immutable error. Reported by
+        dew. (Dave Rolsky)
+        - added test for this (Dave Rolsky)
+
+    * Moose::Meta::Attribute
+      - added support for meta_attr->does("ShortAlias") (sartak)
+        - added tests for this (sartak)
+      - moved the bulk of the `handles` handling to the new
+        install_delegation method (Stevan)
+
+    * Moose::Object
+      - Added BUILDARGS, a new step in new()
+
+    * Moose::Meta::Role::Application::RoleSummation
+      - fix typos no one ever sees (sartak)
+
+    * Moose::Util::TypeConstraints
+    * Moose::Meta::TypeConstraint
+    * Moose::Meta::TypeCoercion
+      - Attempt to work around the ??{ } vs. threads issue
+      - Some null_constraint optimizations
+
+0.50 Thurs. Jun 11, 2008
+    - Fixed a version number issue by bumping all modules
+      to 0.50.
+
+0.49 Thurs. Jun 11, 2008
+    !! This version now approx. 20-25% !!
+    !! faster with new Class::MOP 0.59 !!
+
+    * Moose::Meta::Attribute
+      - fixed how the is => (ro|rw) works with 
+        custom defined reader, writer and accessor
+        options. 
+        - added docs for this (TODO).
+        - added tests for this (Thanks to Penfold)
+      - added the custom attribute alias for regular
+        Moose attributes which is "Moose"
+      - fix builder and default both being used
+        (groditi)
+
+    * Moose
+      Moose::Meta::Class
+      Moose::Meta::Attribute
+      Moose::Meta::Role
+      Moose::Meta::Role::Composite
+      Moose::Util::TypeConstraints
+      - switched usage of reftype to ref because 
+        it is much faster
+        
+    * Moose::Meta::Role
+      - changing add_package_symbol to use the new
+        HASH ref form
+    
+    * Moose::Object
+      - fixed how DEMOLISHALL is called so that it 
+        can be overrided in subclasses (thanks to Sartak)
+        - added test for this (thanks to Sartak)
+
+    * Moose::Util::TypeConstraints
+      - move the ClassName type check code to
+        Class::MOP::is_class_loaded (thanks to Sartak)
+
+    * Moose::Cookbook::Recipe11
+      - add tests for this (thanks to tokuhirom)
+
+0.48 Thurs. May 29, 2008
+    (early morning release engineering)--
+
+    - fixing the version in Moose::Meta::Method::Destructor
+      which was causing the indexer to choke
+
+0.47 Thurs. May 29, 2008
+    (late night release engineering)--
+
+    - fixing the version is META.yml, no functional 
+      changes in this release
+
+0.46 Wed. May 28, 2008
+    !! This version now approx. 20-25% !!
+    !! faster with new Class::MOP 0.57 !!
+
+    * Moose::Meta::Class
+      - some optimizations of the &initialize method
+        since it is called so often by &meta    
+        
+    * Moose::Meta::Class
+      Moose::Meta::Role
+      - now use the get_all_package_symbols from the 
+        updated Class::MOP, test suite is now 10 seconds 
+        faster
+    
+    * Moose::Meta::Method::Destructor
+      - is_needed can now also be called as a class 
+        method for immutablization to check if the 
+        destructor object even needs to be created 
+        at all
+    
+    * Moose::Meta::Method::Destructor
+      Moose::Meta::Method::Constructor
+      - added more descriptive error message to help 
+        keep people from wasting time tracking an error
+        that is easily fixed by upgrading.
+
+0.45 Saturday, May 24, 2008
+    * Moose
+      - Because of work in Class::MOP 0.56, all 
+        XS based functionality is now optional
+        and a Pure Perl version is supplied
+        - the CLASS_MOP_NO_XS environment variable
+          can now be used to force non-XS versions 
+          to always be used   
+        - several of the packages have been tweaked
+          to take care of this, mostly we added
+          support for the package_name and name 
+          variables in all the Method metaclasses
+      - before/around/after method modifiers now 
+        support regexp matching of names
+        (thanks to Takatoshi Kitano)
+        - tests added for this
+        - NOTE: this only works for classes, it 
+          is currently not supported in roles, 
+          but, ... patches welcome
+      - All usage of Carp::confess have been replaced
+        by Carp::croak in the "keyword" functions since
+        the stack trace is usually not helpful
+      
+    * Moose::Role
+      - All usage of Carp::confess have been replaced
+        by Carp::croak in the "keyword" functions since
+        the stack trace is usually not helpful  
+      - The 'has' keyword for roles now accepts the 
+        same array ref form that Moose.pm does 
+        (has [qw/foo bar/] => (is => 'rw', ...))
+        - added test for this
+      
+    * Moose::Meta::Attribute
+      - trigger on a ro-attribute is no longer an
+        error, as it's useful to trigger off of the
+        constructor
+
+    * Moose::Meta::Class
+      - added same 'add_package_symbol' fix as in 
+        Class::MOP 0.56
+
+    * Moose::Util
+      - does_role now handles non-Moose classes 
+        more gracefully
+        - added tests for this
+      - added the 'add_method_modifier' function 
+        (thanks to Takatoshi Kitano)
+
+    * Moose::Util::TypeConstraints
+      - subtypes of parameterizable types now are 
+        themselves parameterizable types
+
+    * Moose::Meta::Method::Constructor
+      - fixed bug where trigger was not being 
+        called by the inlined immutable 
+        constructors 
+        - added test for this (thanks to Caelum)
+    
+    * Moose::Meta::Role::Application::ToInstance
+      - now uses the metaclass of the instance
+        (if possible) to create the anon-class
+        (thanks Jonathan Rockway)
+    
+    * Moose::Cookbook::Recipe22
+      - added the meta-attribute trait recipe
+        (thanks to Sartak)
+    
+    * t/
+      - fixed hash-ordering test bug that was 
+        causing occasional cpantester failures
+      - renamed the t/000_recipe/*.t tests to be 
+        more descriptive (thanks to Sartak) 
+
+0.44 Sat. May 10, 2008
+    * Moose
+      - made make_immutable warning cluck to 
+        show where the error is (thanks mst)
+    
+    * Moose::Object
+      - BUILDALL and DEMOLISHALL now call 
+        ->body when looping through the 
+        methods, to avoid the overloaded
+        method call.
+      - fixed issue where DEMOLISHALL was
+        eating the $@ values, and so not 
+        working correctly, it still kind of
+        eats them, but so does vanilla perl 
+        - added tests for this
+      
+    * Moose::Cookbook::Recipe7
+      - added new recipe for immutable 
+        functionality (thanks Dave Rolsky)
+      
+    * Moose::Cookbook::Recipe9
+      - added new recipe for builder and 
+        lazy_build (thanks Dave Rolsky)
+      
+    * Moose::Cookbook::Recipe11
+      - added new recipe for method aliasing 
+        and exclusion with Roles (thanks Dave Rolsky)
+
+    * t/
+      - fixed Win32 test failure (thanks spicyjack)
+
+    ~ removed Build.PL and Module::Build compat 
+      since Module::Install has done that.
+
+0.43 Wed. April, 30, 2008
+    * NOTE TO SELF:
+        drink more coffee before 
+        doing release engineering
+      
+    - whoops, forgot to do the smolder tests, 
+      and we broke some of the custom meta-attr
+      modules. This fixes that.
+
+0.42 Mon. April 28, 2008
+    - some bad tests slipped by, nothing else 
+      changed in this release (cpantesters++)
+      
+    - upped the Class::MOP dependency to 0.55 
+      since we have tests which need the C3 
+      support
+
+0.41 Mon. April 28, 2008
     ~~ numerous documentation updates ~~
+    
+    - Changed all usage of die to Carp::croak for better
+      error reporting (initial patch by Tod Hagan)
 
     ** IMPORTANT NOTE **
     - the make_immutable keyword is now deprecated, don't
@@ -9,11 +261,93 @@ Revision history for Perl extension Moose
       as well. There will be 2 releases, and then it will
       be removed.
 
+    * Moose
+      Moose::Role
+      Moose::Meta::Class
+      - refactored the way inner and super work to avoid
+        any method/@ISA cache penalty (nothingmuch)
+
+    * Moose::Meta::Class
+      - fixing &new_object to make sure trigger gets the 
+        coerced value (spotted by Charles Alderman on the 
+        mailing list)
+        - added test for this
+
     * Moose::Meta::Method::Constructor
       - immutable classes which had non-lazy attributes were calling
         the default generating sub twice in the constructor. (bug
         found by Jesse Luehrs, fixed by Dave Rolsky)
         - added tests for this (Dave Rolsky)
+      - fix typo in initialize_body method (nothingmuch)
+      
+    * Moose::Meta::Method::Destructor
+      - fix typo in initialize_body method (nothingmuch)
+
+    * Moose::Meta::Method::Overriden
+      Moose::Meta::Method::Augmented
+      - moved the logic for these into their own 
+        classes (nothingmuch)
+
+    * Moose::Meta::Attribute
+      - inherited attributes may now be extended without 
+        restriction on the type ('isa', 'does') (Sartak)
+        - added tests for this (Sartak)
+      - when an attribute property is malformed (such as lazy without 
+        a default), give the name of the attribute in the error 
+        message (Sartak)
+      - added the &applied_traits and &has_applied_traits methods 
+        to allow introspection of traits
+        - added tests for this
+      - moved 'trait' and 'metaclass' argument handling to here from
+        Moose::Meta::Class
+      - clone_and_inherit_options now handles 'trait' and 'metaclass' (has
+        '+foo' syntax) (nothingmuch)
+        - added tests for this (t0m)
+     
+    * Moose::Object 
+      - localize $@ inside DEMOLISHALL to avoid it 
+        eating $@ (found by Ernesto)
+        - added test for this (thanks to Ernesto)
+
+    * Moose::Util::TypeConstraints
+      - &find_type_constraint now DWIMs when given an 
+        type constraint object or name (nothingmuch)
+      - &find_or_create_type_constraint superseded with a number of more
+        specific functions:
+        - find_or_create_{isa,does}_type_constraint
+        - find_or_parse_type_constraint
+
+    * Moose::Meta::TypeConstraint
+      Moose::Meta::TypeConstraint::Class
+      Moose::Meta::TypeConstraint::Role
+      Moose::Meta::TypeConstraint::Enum
+      Moose::Meta::TypeConstraint::Union
+      Moose::Meta::TypeConstraint::Parameterized
+        - added the &equals method for comparing two type 
+          constraints (nothingmuch)
+          - added tests for this (nothingmuch)
+
+    * Moose::Meta::TypeConstraint
+      - add the &parents method, which is just an alias to &parent. 
+        Useful for polymorphism with TC::{Class,Role,Union} (nothingmuch)
+
+    * Moose::Meta::TypeConstraint::Class
+      - added the class attribute for introspection purposes
+        (nothingmuch)
+        - added tests for this
+        
+    * Moose::Meta::TypeConstraint::Enum
+      Moose::Meta::TypeConstraint::Role
+      - broke these out into their own classes (nothingmuch)
+
+    * Moose::Cookbook::Recipe*
+      - fixed references to test file locations in the POD
+        and updated up some text for new Moose features
+        (Sartak)
+
+    * Moose::Util
+      - Added &resolve_metaclass_alias, a helper function for finding an actual
+        class for a short name (e.g. in the traits list)
 
 0.40 Fri. March 14, 2008
     - I hate Pod::Coverage

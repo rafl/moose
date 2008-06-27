@@ -7,12 +7,13 @@ use warnings;
 use Class::MOP;
 
 use Carp         'confess';
-use Scalar::Util 'weaken', 'blessed', 'reftype';
+use Scalar::Util 'weaken', 'blessed';
 
-our $VERSION   = '0.21';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use Moose::Meta::Method::Overriden;
+use Moose::Meta::Method::Augmented;
 
 use base 'Class::MOP::Class';
 
@@ -24,11 +25,13 @@ __PACKAGE__->meta->add_attribute('roles' => (
 sub initialize {
     my $class = shift;
     my $pkg   = shift;
-    $class->SUPER::initialize($pkg,
-        'attribute_metaclass' => 'Moose::Meta::Attribute',
-        'method_metaclass'    => 'Moose::Meta::Method',
-        'instance_metaclass'  => 'Moose::Meta::Instance',
-        @_);
+    return Class::MOP::get_metaclass_by_name($pkg) 
+        || $class->SUPER::initialize($pkg,
+                'attribute_metaclass' => 'Moose::Meta::Attribute',
+                'method_metaclass'    => 'Moose::Meta::Method',
+                'instance_metaclass'  => 'Moose::Meta::Instance',
+                @_
+            );    
 }
 
 sub create {
@@ -121,10 +124,27 @@ sub new_object {
     my ($class, %params) = @_;
     my $self = $class->SUPER::new_object(%params);
     foreach my $attr ($class->compute_all_applicable_attributes()) {
-        if ( defined( my $init_arg = $attr->init_arg ) ) {
-            if ( exists($params{$init_arg}) && $attr->can('has_trigger') && $attr->has_trigger ) {
-                $attr->trigger->($self, $params{$init_arg}, $attr);
-            }
+        # if we have a trigger, then ...
+        if ($attr->can('has_trigger') && $attr->has_trigger) {
+            # make sure we have an init-arg ...
+            if (defined(my $init_arg = $attr->init_arg)) {
+                # now make sure an init-arg was passes ...
+                if (exists $params{$init_arg}) {
+                    # and if get here, fire the trigger
+                    $attr->trigger->(
+                        $self, 
+                        # check if there is a coercion
+                        ($attr->should_coerce
+                            # and if so, we need to grab the 
+                            # value that is actually been stored
+                            ? $attr->get_read_method_ref->($self)
+                            # otherwise, just get the value from
+                            # the constructor params
+                            : $params{$init_arg}), 
+                        $attr
+                    );
+                }
+            }       
         }
     }
     return $self;
@@ -139,7 +159,7 @@ sub construct_instance {
     # have to kludge it in the end.
     my $instance = $params{'__INSTANCE__'} || $meta_instance->create_instance();
     foreach my $attr ($class->compute_all_applicable_attributes()) {
-        $attr->initialize_instance_slot($meta_instance, $instance, \%params)
+        $attr->initialize_instance_slot($meta_instance, $instance, \%params);
     }
     return $instance;
 }
@@ -159,9 +179,10 @@ sub get_method_map {
     my $class_name       = $self->name;
     my $method_metaclass = $self->method_metaclass;
 
-    foreach my $symbol ($self->list_all_package_symbols('CODE')) {
+    my %all_code = $self->get_all_package_symbols('CODE');
 
-        my $code = $self->get_package_symbol('&' . $symbol);
+    foreach my $symbol (keys %all_code) {
+        my $code = $all_code{$symbol};
 
         next if exists  $map->{$symbol} &&
                 defined $map->{$symbol} &&
@@ -183,12 +204,26 @@ sub get_method_map {
             #next unless $self->does_role($role);
         }
         else {
-            next if ($pkg  || '') ne $class_name &&
-                    ($name || '') ne '__ANON__';
+            
+            # NOTE:
+            # in 5.10 constant.pm the constants show up 
+            # as being in the right package, but in pre-5.10
+            # they show up as constant::__ANON__ so we 
+            # make an exception here to be sure that things
+            # work as expected in both.
+            # - SL
+            unless ($pkg eq 'constant' && $name eq '__ANON__') {
+                next if ($pkg  || '') ne $class_name ||
+                        (($name || '') ne '__ANON__' && ($pkg  || '') ne $class_name);
+            }
 
         }
 
-        $map->{$symbol} = $method_metaclass->wrap($code);
+        $map->{$symbol} = $method_metaclass->wrap(
+            $code,
+            package_name => $class_name,
+            name         => $symbol
+        );
     }
 
     return $map;
@@ -207,57 +242,28 @@ sub add_attribute {
 
 sub add_override_method_modifier {
     my ($self, $name, $method, $_super_package) = @_;
+
     (!$self->has_method($name))
         || confess "Cannot add an override method if a local method is already present";
-    # need this for roles ...
-    $_super_package ||= $self->name;
-    my $super = $self->find_next_method_by_name($name);
-    (defined $super)
-        || confess "You cannot override '$name' because it has no super method";
-    $self->add_method($name => Moose::Meta::Method::Overriden->wrap(sub {
-        my @args = @_;
-        no warnings 'redefine';
-        if ($Moose::SUPER_SLOT{$_super_package}) {
-            local *{$Moose::SUPER_SLOT{$_super_package}} = sub { $super->body->(@args) };
-            return $method->(@args);
-        } else {
-            confess "Trying to call override modifier'd method without super()";
-        }
-    }));
+
+    $self->add_method($name => Moose::Meta::Method::Overriden->new(
+        method  => $method,
+        class   => $self,
+        package => $_super_package, # need this for roles
+        name    => $name,
+    ));
 }
 
 sub add_augment_method_modifier {
     my ($self, $name, $method) = @_;
     (!$self->has_method($name))
         || confess "Cannot add an augment method if a local method is already present";
-    my $super = $self->find_next_method_by_name($name);
-    (defined $super)
-        || confess "You cannot augment '$name' because it has no super method";
-    my $_super_package = $super->package_name;
-    # BUT!,... if this is an overriden method ....
-    if ($super->isa('Moose::Meta::Method::Overriden')) {
-        # we need to be sure that we actually
-        # find the next method, which is not
-        # an 'override' method, the reason is
-        # that an 'override' method will not
-        # be the one calling inner()
-        my $real_super = $self->_find_next_method_by_name_which_is_not_overridden($name);
-        $_super_package = $real_super->package_name;
-    }
-    $self->add_method($name => sub {
-        my @args = @_;
-        no warnings 'redefine';
-        if ($Moose::INNER_SLOT{$_super_package}) {
-            local *{$Moose::INNER_SLOT{$_super_package}} = sub {
-                local *{$Moose::INNER_SLOT{$_super_package}} = sub {};
-                $method->(@args);
-            };
-            return $super->body->(@args);
-        }
-        else {
-            return $super->body->(@args);
-        }
-    });
+
+    $self->add_method($name => Moose::Meta::Method::Augmented->new(
+        method  => $method,
+        class   => $self,
+        name    => $name,
+    ));
 }
 
 ## Private Utility methods ...
@@ -316,63 +322,26 @@ sub _fix_metaclass_incompatability {
 # Moose::Util::apply_all_roles
 # instead
 sub _apply_all_roles { 
-    die 'DEPRECATED: use Moose::Util::apply_all_roles($meta, @roles) instead' 
+    Carp::croak 'DEPRECATED: use Moose::Util::apply_all_roles($meta, @roles) instead' 
 }
 
 sub _process_attribute {
-    my $self    = shift;
-    my $name    = shift;
-    my %options = ((scalar @_ == 1 && ref($_[0]) eq 'HASH') ? %{$_[0]} : @_);
+    my ( $self, $name, @args ) = @_;
+
+    @args = %{$args[0]} if scalar @args == 1 && ref($args[0]) eq 'HASH';
 
     if ($name =~ /^\+(.*)/) {
-        return $self->_process_inherited_attribute($1, %options);
+        return $self->_process_inherited_attribute($1, @args);
     }
     else {
-        my $attr_metaclass_name;
-        if ($options{metaclass}) {
-            my $metaclass_name = $options{metaclass};
-            eval {
-                my $possible_full_name = 'Moose::Meta::Attribute::Custom::' . $metaclass_name;
-                Class::MOP::load_class($possible_full_name);
-                $metaclass_name = $possible_full_name->can('register_implementation')
-                    ? $possible_full_name->register_implementation
-                    : $possible_full_name;
-            };
-            if ($@) {
-                Class::MOP::load_class($metaclass_name);
-            }
-            $attr_metaclass_name = $metaclass_name;
-        }
-        else {
-            $attr_metaclass_name = $self->attribute_metaclass;
-        }
-
-        if ($options{traits}) {
-            my @traits;
-            foreach my $trait (@{$options{traits}}) {
-                eval {
-                    my $possible_full_name = 'Moose::Meta::Attribute::Custom::Trait::' . $trait;
-                    Class::MOP::load_class($possible_full_name);
-                    push @traits => $possible_full_name->can('register_implementation')
-                      ? $possible_full_name->register_implementation
-                        : $possible_full_name;
-                };
-                if ($@) {
-                    push @traits => $trait;
-                }
-            }
-            
-            my $class = Moose::Meta::Class->create_anon_class(
-                superclasses => [ $attr_metaclass_name ],
-                roles        => [ @traits ],
-                cache        => 1,
-            );
-            
-            $attr_metaclass_name = $class->name;
-        }
-        
-        return $attr_metaclass_name->new($name, %options);
+        return $self->_process_new_attribute($name, @args);
     }
+}
+
+sub _process_new_attribute {
+    my ( $self, $name, @args ) = @_;
+
+    $self->attribute_metaclass->interpolate_class_and_new($name, @args);
 }
 
 sub _process_inherited_attribute {
@@ -407,7 +376,6 @@ sub create_immutable_transformer {
            remove_method
            add_attribute
            remove_attribute
-           add_package_symbol
            remove_package_symbol
            add_role
        /],
@@ -418,7 +386,19 @@ sub create_immutable_transformer {
            get_method_map                    => 'SCALAR',
            # maybe ....
            calculate_all_roles               => 'ARRAY',
-       }
+       },
+       # NOTE:
+       # this is ugly, but so are typeglobs, 
+       # so whattayahgonnadoboutit
+       # - SL
+       wrapped => { 
+           add_package_symbol => sub {
+               my $original = shift;
+               confess "Cannot add package symbols to an immutable metaclass" 
+                   unless (caller(2))[3] eq 'Class::MOP::Package::get_package_symbol'; 
+               goto $original->body;
+           },
+       },       
     });
     return $class;
 }

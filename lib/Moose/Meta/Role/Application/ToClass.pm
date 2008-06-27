@@ -9,7 +9,7 @@ use Scalar::Util    'blessed';
 
 use Data::Dumper;
 
-our $VERSION   = '0.01';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::Role::Application';
@@ -110,8 +110,7 @@ sub apply_methods {
             $class->get_method($method_name)->body != $role->get_method($method_name)->body) {
             next;
         }
-        else {           
-            
+        else {
             # add it, although it could be overriden
             $class->alias_method(
                 $method_name,

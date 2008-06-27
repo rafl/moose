@@ -7,7 +7,7 @@ use metaclass;
 use Carp         'confess';
 use Scalar::Util 'blessed';
 
-our $VERSION   = '0.02';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::Role::Application::ToClass';
@@ -29,7 +29,8 @@ sub apply {
         $class = $ANON_CLASSES{$anon_role_key};
     }
     else {
-        $class = Moose::Meta::Class->create_anon_class(
+        my $obj_meta = eval { $object->meta } || 'Moose::Meta::Class';
+        $class = $obj_meta->create_anon_class(
             superclasses => [ blessed($object) ]
         );
         $ANON_CLASSES{$anon_role_key} = $class;

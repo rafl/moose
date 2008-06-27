@@ -8,11 +8,10 @@ use metaclass;
 use overload '""'     => sub { shift->name },   # stringify to tc name
              fallback => 1;
 
-use Sub::Name    'subname';
 use Carp         'confess';
-use Scalar::Util 'blessed';
+use Scalar::Util qw(blessed refaddr);
 
-our $VERSION   = '0.12';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 __PACKAGE__->meta->add_attribute('name'       => (reader => 'name'));
@@ -20,10 +19,12 @@ __PACKAGE__->meta->add_attribute('parent'     => (
     reader    => 'parent',
     predicate => 'has_parent',
 ));
+
+my $null_constraint = sub { 1 };
 __PACKAGE__->meta->add_attribute('constraint' => (
     reader  => 'constraint',
     writer  => '_set_constraint',
-    default => sub { sub { 1 } }
+    default => sub { $null_constraint }
 ));
 __PACKAGE__->meta->add_attribute('message'   => (
     accessor  => 'message',
@@ -38,6 +39,11 @@ __PACKAGE__->meta->add_attribute('hand_optimized_type_constraint' => (
     accessor  => 'hand_optimized_type_constraint',
     predicate => 'has_hand_optimized_type_constraint',
 ));
+
+sub parents {
+    my $self;
+    $self->parent;
+}
 
 # private accessors
 
@@ -83,18 +89,49 @@ sub get_message {
 
 ## type predicates ...
 
+sub equals {
+    my ( $self, $type_or_name ) = @_;
+
+    my $other = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
+
+    return 1 if refaddr($self) == refaddr($other);
+
+    if ( $self->has_hand_optimized_type_constraint and $other->has_hand_optimized_type_constraint ) {
+        return 1 if $self->hand_optimized_type_constraint == $other->hand_optimized_type_constraint;
+    }
+
+    return unless $self->constraint == $other->constraint;
+
+    if ( $self->has_parent ) {
+        return unless $other->has_parent;
+        return unless $self->parent->equals( $other->parent );
+    } else {
+        return if $other->has_parent;
+    }
+
+    return 1;
+}
+
 sub is_a_type_of {
-    my ($self, $type_name) = @_;
-    ($self->name eq $type_name || $self->is_subtype_of($type_name));
+    my ($self, $type_or_name) = @_;
+
+    my $type = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
+
+    ($self->equals($type) || $self->is_subtype_of($type));
 }
 
 sub is_subtype_of {
-    my ($self, $type_name) = @_;
+    my ($self, $type_or_name) = @_;
+
+    my $type = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
+
     my $current = $self;
+
     while (my $parent = $current->parent) {
-        return 1 if $parent->name eq $type_name;
+        return 1 if $parent->equals($type);
         $current = $parent;
     }
+
     return 0;
 }
 
@@ -138,38 +175,60 @@ sub _compile_hand_optimized_type_constraint {
 sub _compile_subtype {
     my ($self, $check) = @_;
 
-    # so we gather all the parents in order
-    # and grab their constraints ...
+    # gather all the parent constraintss in order
     my @parents;
+    my $optimized_parent;
     foreach my $parent ($self->_collect_all_parents) {
+        # if a parent is optimized, the optimized constraint already includes
+        # all of its parents tcs, so we can break the loop
         if ($parent->has_hand_optimized_type_constraint) {
-            unshift @parents => $parent->hand_optimized_type_constraint;
+            push @parents => $optimized_parent = $parent->hand_optimized_type_constraint;
             last;
         }
         else {
-            unshift @parents => $parent->constraint;
+            push @parents => $parent->constraint;
         }
     }
 
-    # then we compile them to run without
-    # having to recurse as we did before
-    return subname $self->name => sub {
-        local $_ = $_[0];
-        foreach my $parent (@parents) {
-            return undef unless $parent->($_[0]);
+    @parents = grep { $_ != $null_constraint } reverse @parents;
+
+    unless ( @parents ) {
+        return $self->_compile_type($check);
+    } elsif( $optimized_parent and @parents == 1 ) {
+        # the case of just one optimized parent is optimized to prevent
+        # looping and the unnecessary localization
+        if ( $check == $null_constraint ) {
+            return $optimized_parent;
+        } else {
+            return Class::MOP::subname($self->name, sub {
+                return undef unless $optimized_parent->($_[0]);
+                local $_ = $_[0];
+                $check->($_[0]);
+            });
         }
-        return undef unless $check->($_[0]);
-        1;
-    };
+    } else {
+        # general case, check all the constraints, from the first parent to ourselves
+        my @checks = @parents;
+        push @checks, $check if $check != $null_constraint;
+        return Class::MOP::subname($self->name => sub {
+            local $_ = $_[0];
+            foreach my $check (@checks) {
+                return undef unless $check->($_[0]);
+            }
+            return 1;
+        });
+    }
 }
 
 sub _compile_type {
     my ($self, $check) = @_;
-    return subname $self->name => sub {
+
+    return $check if $check == $null_constraint; # Item, Any
+
+    return Class::MOP::subname($self->name => sub {
         local $_ = $_[0];
-        return undef unless $check->($_[0]);
-        1;
-    };
+        $check->($_[0]);
+    });
 }
 
 ## other utils ...
@@ -187,7 +246,7 @@ sub _collect_all_parents {
 
 ## this should get deprecated actually ...
 
-sub union { die "DEPRECATED" }
+sub union { Carp::croak "DEPRECATED" }
 
 1;
 
@@ -218,12 +277,14 @@ If you wish to use features at this depth, please come to the
 
 =item B<new>
 
-=item B<is_a_type_of ($type_name)>
+=item B<equals ($type_name_or_object)>
+
+=item B<is_a_type_of ($type_name_or_object)>
 
 This checks the current type name, and if it does not match,
 checks if it is a subtype of it.
 
-=item B<is_subtype_of ($type_name)>
+=item B<is_subtype_of ($type_name_or_object)>
 
 =item B<compile_type_constraint>
 
@@ -248,6 +309,8 @@ the C<message> will be used to construct a custom error message.
 =item B<parent>
 
 =item B<has_parent>
+
+=item B<parents>
 
 =item B<constraint>
 

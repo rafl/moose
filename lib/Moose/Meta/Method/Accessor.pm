@@ -6,7 +6,7 @@ use warnings;
 
 use Carp 'confess';
 
-our $VERSION   = '0.12';
+our $VERSION   = '0.52';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::Method',
@@ -28,6 +28,7 @@ sub _eval_code {
                                    ? $type_constraint_obj->_compiled_type_constraint
                                    : undef;
 
+    #warn "code for $attr_name =>\n" . $code . "\n";
     my $sub = eval $code;
     confess "Could not create writer for '$attr_name' because $@ \n code: $code" if $@;
     return $sub;
@@ -144,7 +145,7 @@ sub _inline_check_required {
     my $attr_name = $attr->name;
     
     return '' unless $attr->is_required;
-    return qq{defined(\$_[1]) || confess "Attribute ($attr_name) is required, so cannot be set to undef";}
+    return qq{(\@_ >= 2) || confess "Attribute ($attr_name) is required, so cannot be set to undef";} # defined $_[1] is not good enough
 }
 
 sub _inline_check_lazy {
