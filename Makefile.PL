@@ -10,9 +10,10 @@ license 'perl';
 my $win32 = !! ( $^O eq 'Win32' or $^O eq 'cygwin' );
 
 # prereqs
+requires 'perl'             => '5.008';
 requires 'Scalar::Util' => $win32 ? '1.17' : '1.18';
 requires 'Carp';
-requires 'Class::MOP'       => '0.64';
+requires 'Class::MOP'       => '0.64_01';
 requires 'List::MoreUtils';
 requires 'Sub::Exporter'    => '0.972';
 

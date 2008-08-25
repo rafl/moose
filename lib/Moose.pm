@@ -4,7 +4,10 @@ package Moose;
 use strict;
 use warnings;
 
-our $VERSION   = '0.56';
+use 5.008;
+
+our $VERSION   = '0.55_01';
+$VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
 use Scalar::Util 'blessed';

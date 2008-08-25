@@ -1,9 +1,24 @@
 Revision history for Perl extension Moose
 
 0.56
+    * Makefile.PL and Moose.pm
+      - explicitly require Perl 5.8.0+ (Dave Rolsky)
+
+0.55_01 Wed August 20, 2008
+
+    !! Calling Moose::init_meta as a function is now         !!
+    !! deprecated. Please see the Moose.pm docs for details. !!
+
     * Moose::Meta::Method::Constructor
       - Fix inlined constructor so that values produced by default
-        or builder methods are coerced as required + test (t0m)
+        or builder methods are coerced as required. (t0m)
+        - added test for this (t0m)
+
+    * Moose::Meta::Attribute
+      - A lazy attribute with a default or builder did not attempt to
+        coerce the default value. The immutable code _did_
+        coerce. (t0m)
+        - added test for this (t0m)
 
     * Moose::Exporter
       - This is a new helper module for writing "Moose-alike"
@@ -19,6 +34,13 @@ Revision history for Perl extension Moose
         This should make writing small Moose extensions a little
         easier (Dave Rolsky)
 
+    * Moose::Cookbook::Basics::Recipe1
+      - Removed any examples of direct hashref access, and applied an
+        editorial axe to reduce verbosity. (Dave Rolsky)
+
+    * Moose::Cookbook::Basics::Recipe1
+      - Also applied an editorial axe here. (Dave Rolsky)
+
     * Moose
     * Moose::Cookbook::Extending::Recipe1
     * Moose::Cookbook::Extending::Recipe2
@@ -30,6 +52,21 @@ Revision history for Perl extension Moose
       - These two modules now warn when you load them from the main
         package "main" package, because we will not export sugar to
         main. Previously it just did nothing. (Dave Rolsky)
+
+    * Moose::Role
+      - Now provide an init_meta method just like Moose.pm, and you
+        can call this to provide an alternate role metaclass. (Dave
+        Rolsky and nothingmuch)
+      - get_method_map now respects the package cache flag (nothingmuch)
+
+    * Moose::Meta::Role
+      - Two new methods - add_method and wrap_method_body
+        (nothingmuch)
+
+    * many modules
+      - Optimizations including allowing constructors to accept hash
+        refs, making many more classes immutable, and making
+        constructors immutable. (nothingmuch)
 
 0.55 Sun August 3, 2008
     * Moose::Meta::Attribute
