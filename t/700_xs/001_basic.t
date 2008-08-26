@@ -11,7 +11,7 @@ BEGIN {
 
     plan skip_all => $@ unless eval {
         require Moose;
-        Moose->XSLoader::load($Moose::VERSION);
+        Moose->XSLoader::load($Moose::XS_VERSION);
         1;
     };
 

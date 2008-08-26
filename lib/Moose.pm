@@ -7,6 +7,7 @@ use warnings;
 use 5.008;
 
 our $VERSION   = '0.55_01';
+our $XS_VERSION = $VERSION;
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
