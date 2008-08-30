@@ -6,9 +6,6 @@ use warnings;
 use Test::More tests => 12;
 use Test::Exception;
 
-use Moose::Meta::Role::Application::RoleSummation;
-use Moose::Meta::Role::Composite;
-
 {
     package Role::Foo;
     use Moose::Role;
@@ -28,6 +25,9 @@ use Moose::Meta::Role::Composite;
     use Moose::Role;
     with 'Role::Foo';    
 }
+
+use Moose::Meta::Role::Application::RoleSummation;
+use Moose::Meta::Role::Composite;
 
 ok(Role::ExcludesFoo->meta->excludes_role('Role::Foo'), '... got the right exclusions');
 ok(Role::DoesExcludesFoo->meta->excludes_role('Role::Foo'), '... got the right exclusions');

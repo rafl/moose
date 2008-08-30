@@ -6,8 +6,6 @@ use warnings;
 use Test::More tests => 14;
 use Test::Exception;
 
-use Moose::Meta::Role::Application::RoleSummation;
-use Moose::Meta::Role::Composite;
 
 {
     package Role::Foo;
@@ -22,6 +20,9 @@ use Moose::Meta::Role::Composite;
     package Role::Gorch;
     use Moose::Role;       
 }
+
+use Moose::Meta::Role::Application::RoleSummation;
+use Moose::Meta::Role::Composite;
 
 {
     my $c = Moose::Meta::Role::Composite->new(

@@ -6,9 +6,6 @@ use warnings;
 use Test::More tests => 8;
 use Test::Exception;
 
-use Moose::Meta::Role::Application::RoleSummation;
-use Moose::Meta::Role::Composite;
-
 {
     package Role::Foo;
     use Moose::Role;
@@ -35,6 +32,9 @@ use Moose::Meta::Role::Composite;
     
     sub bar { 'Role::BarConflict::bar' }
 }
+
+use Moose::Meta::Role::Application::RoleSummation;
+use Moose::Meta::Role::Composite;
 
 # test simple overrides
 {

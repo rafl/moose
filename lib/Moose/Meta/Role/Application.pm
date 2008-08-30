@@ -29,7 +29,7 @@ sub new {
                                 ? $params{excludes} 
                                 : [ $params{excludes} ]);
     }
-    
+        
     $class->_new(\%params);
 }
 

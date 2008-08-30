@@ -498,6 +498,24 @@ sub combine {
     return $c;
 }
 
+for my $class (qw(
+    Moose::Meta::Role
+    Moose::Meta::Role::Composite
+    Moose::Meta::Role::Application
+    Moose::Meta::Role::Application::RoleSummation
+    Moose::Meta::Role::Application::ToClass
+    Moose::Meta::Role::Application::ToRole
+    Moose::Meta::Role::Application::ToInstance
+    Moose::Meta::Role::Application::ToMetaclassInstance        
+)) {
+    Class::MOP::load_class($class);
+    $class->meta->make_immutable(
+        inline_constructor => 1,
+        constructor_name   => "_new",
+        inline_accessors   => 1,  # these are Class::MOP accessors, so they need inlining
+      );
+}
+
 #####################################################################
 ## NOTE:
 ## This is Moose::Meta::Role as defined by Moose (plus the use of 

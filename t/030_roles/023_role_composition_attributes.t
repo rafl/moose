@@ -6,9 +6,6 @@ use warnings;
 use Test::More tests => 7;
 use Test::Exception;
 
-use Moose::Meta::Role::Application::RoleSummation;
-use Moose::Meta::Role::Composite;
-
 {
     package Role::Foo;
     use Moose::Role;    
@@ -30,6 +27,10 @@ use Moose::Meta::Role::Composite;
     use Moose::Role;    
     with 'Role::FooConflict';
 }
+
+use Moose::Meta::Role::Application::RoleSummation;
+use Moose::Meta::Role::Composite;
+
 
 # test simple attributes
 {

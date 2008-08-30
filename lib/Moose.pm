@@ -25,15 +25,6 @@ use Moose::Meta::Instance;
 
 use Moose::Object;
 
-use Moose::Meta::Role;
-use Moose::Meta::Role::Composite;
-use Moose::Meta::Role::Application;
-use Moose::Meta::Role::Application::RoleSummation;
-use Moose::Meta::Role::Application::ToClass;
-use Moose::Meta::Role::Application::ToRole;
-use Moose::Meta::Role::Application::ToInstance;
-use Moose::Meta::Role::Application::ToMetaclassInstance;
-
 use Moose::Util::TypeConstraints;
 use Moose::Util ();
 
@@ -59,6 +50,8 @@ sub extends {
     my $meta = Moose::Meta::Class->initialize($class)->_fix_metaclass_incompatability(@supers);
     $meta->superclasses(@supers);
 }
+
+
 
 sub with {
     my $class = shift;
@@ -268,18 +261,6 @@ $_->meta->make_immutable(
     Moose::Meta::Method::Overriden
     Moose::Meta::Method::Augmented
 
-    Moose::Meta::Role
-    Moose::Meta::Role::Method
-    Moose::Meta::Role::Method::Required
-
-    Moose::Meta::Role::Composite
-
-    Moose::Meta::Role::Application
-    Moose::Meta::Role::Application::RoleSummation
-    Moose::Meta::Role::Application::ToClass
-    Moose::Meta::Role::Application::ToRole
-    Moose::Meta::Role::Application::ToInstance
-    Moose::Meta::Role::Application::ToMetaclassInstance
 ));
 
 1;

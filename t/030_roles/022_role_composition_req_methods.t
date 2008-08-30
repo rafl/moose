@@ -6,9 +6,6 @@ use warnings;
 use Test::More tests => 16;
 use Test::Exception;
 
-use Moose::Meta::Role::Application::RoleSummation;
-use Moose::Meta::Role::Composite;
-
 {
     package Role::Foo;
     use Moose::Role;    
@@ -26,6 +23,9 @@ use Moose::Meta::Role::Composite;
     use Moose::Role;    
     sub bar { 'Role::ProvidesBar::bar' }     
 }
+
+use Moose::Meta::Role::Application::RoleSummation;
+use Moose::Meta::Role::Composite;
 
 # test simple requirement
 {
