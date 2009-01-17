@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 33;
+use Test::More tests => 35;
 use Test::Exception;
 
 BEGIN {
@@ -35,6 +35,9 @@ ok( $Str_or_Undef->equals($Str_or_Undef), "equal to self" );
 ok( $Str_or_Undef->equals(Moose::Meta::TypeConstraint::Union->new(type_constraints => [ $Str, $Undef ])), "equal to clone" );
 ok( $Str_or_Undef->equals(Moose::Meta::TypeConstraint::Union->new(type_constraints => [ $Undef, $Str ])), "equal to reversed clone" );
 
+ok( !$Str_or_Undef->is_a_type_of("ThisTypeDoesNotExist"), "not type of non existant type" );
+ok( !$Str_or_Undef->is_subtype_of("ThisTypeDoesNotExist"), "not subtype of non existant type" );
+
 # another ....
 
 my $ArrayRef = find_type_constraint('ArrayRef');
@@ -64,14 +67,14 @@ ok(!defined($HashOrArray->validate([])), '... (ArrayRef | HashRef) can accept []
 ok(!defined($HashOrArray->validate({})), '... (ArrayRef | HashRef) can accept {}');
 
 like($HashOrArray->validate(\(my $var2)), 
-qr/Validation failed for \'ArrayRef\' failed with value SCALAR\(0x.+?\) and Validation failed for \'HashRef\' failed with value SCALAR\(0x.+?\) in \(ArrayRef \| HashRef\)/, 
+qr/Validation failed for \'ArrayRef\' failed with value SCALAR\(0x.+?\) and Validation failed for \'HashRef\' failed with value SCALAR\(0x.+?\) in \(ArrayRef\|HashRef\)/, 
 '... (ArrayRef | HashRef) cannot accept scalar refs');
 
 like($HashOrArray->validate(sub {}),      
-qr/Validation failed for \'ArrayRef\' failed with value CODE\(0x.+?\) and Validation failed for \'HashRef\' failed with value CODE\(0x.+?\) in \(ArrayRef \| HashRef\)/, 
+qr/Validation failed for \'ArrayRef\' failed with value CODE\(0x.+?\) and Validation failed for \'HashRef\' failed with value CODE\(0x.+?\) in \(ArrayRef\|HashRef\)/, 
 '... (ArrayRef | HashRef) cannot accept code refs');
 
 is($HashOrArray->validate(50),
-'Validation failed for \'ArrayRef\' failed with value 50 and Validation failed for \'HashRef\' failed with value 50 in (ArrayRef | HashRef)', 
+'Validation failed for \'ArrayRef\' failed with value 50 and Validation failed for \'HashRef\' failed with value 50 in (ArrayRef|HashRef)', 
 '... (ArrayRef | HashRef) cannot accept Numbers');
 

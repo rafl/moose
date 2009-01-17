@@ -6,7 +6,7 @@ use metaclass;
 
 use Moose::Util::TypeConstraints ();
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -67,6 +67,11 @@ sub _compile_hand_optimized_type_constraint {
     sub { defined($_[0]) && !ref($_[0]) && exists $values{$_[0]} };
 }
 
+sub create_child_type {
+    my ($self, @args) = @_;
+    return Moose::Meta::TypeConstraint->new(@args, parent => $self);
+}
+
 1;
 
 __END__
@@ -90,6 +95,8 @@ Moose::Meta::TypeConstraint::Enum - Type constraint for enumerated values.
 =item B<values>
 
 =item B<meta>
+
+=item B<create_child_type>
 
 =back
 

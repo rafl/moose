@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 84;
+use Test::More tests => 88;
 use Test::Exception;
 
 
@@ -36,6 +36,11 @@ isa_ok($bar, 'Bar');
 
 ok($bar->foo, '... we have something in bar->foo');
 isa_ok($bar->foo, 'Foo');
+
+my $meth = Bar->meta->get_method('foo_bar');
+isa_ok($meth, 'Moose::Meta::Method::Delegation');
+is($meth->associated_attribute->name, 'foo',
+   'associated_attribute->name for this method is foo');
 
 is($bar->foo->bar, 10, '... bar->foo->bar returned the right default');
 
@@ -387,3 +392,21 @@ is($car->stop, 'Engine::stop', '... got the right value from ->stop');
     is($baz->foo->bar, 25, '... baz->foo->bar returned the right result');
     is($baz->bar, 25, '... and baz->foo_bar delegated correctly again');
 }
+
+# Check that removing attributes removes their handles methods also.
+{
+    {
+        package Quux;
+        use Moose;
+        has foo => ( 
+            isa => 'Foo', 
+            default => sub { Foo->new },
+            handles => { 'foo_bar' => 'bar' }
+        );
+    }
+    my $i = Quux->new;
+    ok($i->meta->has_method('foo_bar'), 'handles method foo_bar is present');
+    $i->meta->remove_attribute('foo');
+    ok(!$i->meta->has_method('foo_bar'), 'handles method foo_bar is removed');
+}
+

@@ -7,7 +7,7 @@ use metaclass;
 use Scalar::Util 'blessed';
 use Moose::Util::TypeConstraints ();
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -59,6 +59,7 @@ sub equals {
 
     my $other = Moose::Util::TypeConstraints::find_type_constraint($type_or_name);
 
+    return unless defined $other;
     return unless $other->isa(__PACKAGE__);
 
     return $self->role eq $other->role;
@@ -82,6 +83,8 @@ sub is_subtype_of {
 
     my $type = Moose::Util::TypeConstraints::find_type_constraint($type_or_name_or_role);
 
+    return unless defined $type;
+    
     if ( $type->isa(__PACKAGE__) ) {
         # if $type_or_name_or_role isn't a role, it might be the TC name of another ::Role type
         # or it could also just be a type object in this branch
@@ -90,6 +93,11 @@ sub is_subtype_of {
         # the only other thing we are a subtype of is Object
         $self->SUPER::is_subtype_of($type);
     }
+}
+
+sub create_child_type {
+    my ($self, @args) = @_;
+    return Moose::Meta::TypeConstraint->new(@args, parent => $self);
 }
 
 1;
@@ -119,6 +127,8 @@ Moose::Meta::TypeConstraint::Role - Role/TypeConstraint parallel hierarchy
 =item B<is_a_type_of>
 
 =item B<is_subtype_of>
+
+=item B<create_child_type>
 
 =item B<parents>
 

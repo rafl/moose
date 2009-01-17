@@ -1,6 +1,378 @@
 Revision history for Perl extension Moose
 
-0.56
+0.65
+    * Moose and Moose::Meta::Method::Overridden
+      - If an overridden method called super(), and then the
+        superclass's method (not overridden) _also_ called super(),
+        Moose went into an endless recursion loop. Test provided by
+        Chris Prather. (Dave Rolsky)
+    * Moose::Meta::TypeConstraint
+      - Add some explanation for a few explanationless methods (gphat)
+
+0.64 Wed, December 31, 2008
+    * Moose::Meta::Method::Accessor
+      - Always inline predicate and clearer methods (Sartak)
+    * Moose::Meta::Attribute
+      - Support for parameterized traits (Sartak)
+      - verify_against_type_constraint method to avoid duplication
+        and enhance extensibility (Sartak)
+    * Moose::Meta::Class
+      - Tests (but no support yet) for parameterized traits (Sartak)
+    * Moose
+      - Require Class::MOP 0.75+, which has the side effect of making
+        sure we work on Win32. (Dave Rolsky)
+
+0.63 Mon, December 8, 2008
+    * Moose::Unsweetened
+      - Some small grammar tweaks and bug fixes in non-Moose example
+        code. (Dave Rolsky)
+
+0.62_02 Fri, December 5, 2008
+    * Moose::Meta::Role::Application::ToClass
+      - When a class does not provide all of a role's required
+        methods, the error thrown now mentions all of the missing
+        methods, as opposed to just the first one found. Requested by
+        Curtis Poe (RT #41119). (Dave Rolsky)
+
+    * Moose::Meta::Method::Constructor
+      - Moose will no longer inline a constructor for your class
+        unless it inherits its constructor from Moose::Object, and
+        will warn when it doesn't inline. If you want to force
+        inlining anyway, pass "replace_constructor => 1" to
+        make_immutable. Addresses RT #40968, reported by Jon
+        Swartz. (Dave Rolsky)
+      - The quoting of default values could be broken if the default
+        contained a single quote ('). Now we use quotemeta to escape
+        anything potentially dangerous in the defaults. (Dave Rolsky)
+
+0.62_01 Wed, December 3, 2008
+    * Moose::Object
+      - use the method->execute API for BUILDALL
+        and DEMOLISHALL (Sartak)
+
+    * Moose::Util::TypeConstraints
+      - We now make all the type constraint meta classes immutable
+        before creating the default types provided by Moose. This
+        should make loading Moose a little faster. (Dave Rolsky)
+
+0.62 Wed November 26, 2008
+    * Moose::Meta::Role::Application::ToClass
+      Moose::Meta::Role::Application::ToRole
+      - fixed issues where excluding and aliasing the
+        same methods for a single role did not work
+        right (worked just fine with multiple
+        roles) (stevan)
+        - added test for this (stevan)
+
+    * Moose::Meta::Role::Application::RoleSummation
+      - fixed the error message when trying to compose
+        a role with a role it excludes (Sartak)
+
+    * Moose::Exporter
+      - Catch another case where recursion caused the value
+        of $CALLER to be stamped on (t0m)
+        - added test for this (t0m)
+
+    * Moose
+      - Remove the make_immutable keyword, which has been
+        deprecated since April. It breaks metaclasses that
+        use Moose without no Moose (Sartak)
+
+    * Moose::Meta::Attribute
+      - Removing an attribute from a class now also removes delegation
+        (handles) methods installed for that attribute (t0m)
+        - added test for this (t0m)
+
+    * Moose::Meta::Method::Constructor
+      - An attribute with a default that looked like a number (but was
+        really a string) would accidentally be treated as a number
+        when the constructor was made immutable (perigrin)
+        - added test for this (perigrin)
+
+    * Moose::Meta::Role
+      - create method for constructing a role
+        dynamically (Sartak)
+        - added test for this (Sartak)
+      - anonymous roles! (Sartak)
+        - added test for this (Sartak)
+
+    * Moose::Role
+      - more consistent error messages (Sartak)
+
+    * Moose::Cookbook::Roles::Recipe1
+      - attempt to explain why a role that just requires
+        methods is useful (Sartak)
+
+0.61 Fri November 7, 2008
+    * Moose::Meta::Attribute
+      - When passing a role to handles, it will be loaded if necessary
+        (perigrin)
+
+    * Moose::Meta::Class
+      - Method objects returned by get_method (and other methods)
+        Could end up being returned without an associated_metaclass
+        attribute. Removing get_method_map, which is provided by
+        Class::MOP::Class, fixed this. The Moose version did nothing
+        different from its parent except introduce a bug. (Dave Rolsky)
+        - added tests for this (jdv79)
+
+    * Various
+      - Added a $VERSION to all .pm files which didn't have one. Fixes
+        RT #40049, reported by Adam Kennedy. (Dave Rolsky)
+
+    * Moose::Cookbook::Basics::Recipe4
+    * Moose::Cookbook::Basics::Recipe6
+      - These files had spaces on the first line of the SYNOPSIS, as
+        opposed to a totally empty line. According to RT #40432, this
+        confuses POD parsers. (Dave Rolsky)
+
+0.60 Fri October 24, 2008
+    * Moose::Exporter
+      - Passing "-traits" when loading Moose caused the Moose.pm
+        exports to be broken. Reported by t0m. (Dave Rolsky)
+        - Tests for this bug. (t0m)
+    
+    * Moose::Util
+      - Change resolve_metaclass alias to use the new
+        load_first_existing_class function. This makes it a lot
+        simpler, and also around 5 times faster. (t0m)
+      - Add caching to resolve_metaclass_alias, which gives an order
+        of magnitude speedup to things which repeatedly call the
+        Moose::Meta::Attribute->does method, notably MooseX::Storage
+        (t0m)
+
+    * Moose::Util::TypeConstraint
+      - Put back the changes for parameterized constraints that
+        shouldn't have been removed in 0.59. We still cannot parse
+        them, but MooseX modules can create them in some other
+        way. See the 0.58 changes for more details. (jnapiorkowski)
+      - Changed the way subtypes are created so that the job is
+        delegated to a type constraint parent.  This clears up some
+        hardcoded checking and should allow correct subtypes of
+        Moose::Meta::Type::Constraint. Don't rely on this new API too
+        much (create_child_type) because it may go away in the
+        future. (jnapiorkowski)
+
+    * Moose::Meta::TypeConstraint::Union
+      - Type constraint names are sorted as strings, not numbers.
+        (jnapiorkowski)
+      
+    * Moose::Meta::TypeConstraint::Parameterizable
+      - New parameterize method. This can be used as a factory method
+        to make a new type constraint with a given parameterized
+        type. (jnapiorkowski)
+        - added tests (jnapiorkowski)
+
+0.59 Tue October 14, 2008
+    * Moose
+      - Add abridged documentation for builder/default/initializer/
+        predicate, and link to more details sections in 
+        Class::MOP::Attribute. (t0m)
+
+    * Moose::Util::TypeConstraints
+      - removed prototypes from all but the &-based stuff (mst)
+
+    * Moose::Util::TypeConstraints
+      - Creating a anonymous subtype with both a constraint and a
+        message failed with a very unhelpful error, but should just
+        work. Reported by t0m. (Dave Rolsky)
+
+    * Tests
+      - Some tests that used Test::Warn if it was available failed
+        with older versions of Test::Warn. Reported by Fayland. (Dave
+        Rolsky)
+      - Test firing behavior of triggers in relation to builder/default/
+        lazy_build. (t0m)
+      - Test behavior of equals/is_a_type_of/is_a_subtype_of for all
+        kinds of supported type. (t0m)
+
+    * Moose::Meta::Class
+      - In create(), do not pass "roles" option to the superclass
+        - added related test that creates an anon metaclass with
+          a required attribute
+
+    * Moose::Meta::TypeConstraint::Class
+    * Moose::Meta::TypeConstraint::Role
+      - Unify behavior of equals/is_a_type_of/is_a_subtype_of with
+        other types (as per change in 0.55_02). (t0m)
+
+    * Moose::Meta::TypeConstraint::Registry
+      - Fix warning when dealing with unknown type names (t0m)
+
+    * Moose::Util::TypeConstraints
+      - Reverted changes from 0.58 related to handle parameterized
+        types. This caused random failures on BSD and Win32 systems,
+        apparently related to the regex engine. This means that Moose
+        can no longer parse structured type constraints like
+        ArrayRef[Int,Int] or HashRef[name=>Str]. This will be
+        supported in a slightly different way via MooseX::Types some
+        time in the future. (Dave Rolsky)
+
+0.58 Sat September 20, 2008
+    !! This release has an incompatible change regarding !!
+    !! how roles add methods to a class !!
+
+    * Roles and role application
+      ! Roles now add methods by calling add_method, not
+        alias_method. They make sure to always provide a method
+        object, which will be cloned internally. This means that it is
+        now possible to track the source of a method provided by a
+        role, and even follow its history through intermediate roles.
+
+        This means that methods added by a role now show up when
+        looking at a class's method list/map. (Dave Rolsky)
+
+    * Makefile.PL
+      - From this release on, we'll try to maintain a list of
+        conflicting modules, and warn you if you have one
+        installed. For example, this release conflicts with ...
+        - MooseX::Singleton        <= 0.11
+        - MooseX::Params::Validate <= 0.05
+        - Fey::ORM                 <= 0.10
+
+        In general, we try to not break backwards compatibility for
+        most Moose users, but MooseX modules and other code which
+        extends Moose's metaclasses is often affected by very small
+        changes in the Moose internals.
+
+    * Moose::Meta::Method::Delegation
+    * Moose::Meta::Attribute
+      - Delegation methods now have their own method class. (Dave
+        Rolsky)
+
+    * Moose::Meta::TypeConstraint::Parameterizable
+      - Added a new method 'parameterize' which is basically a factory
+        for the containing constraint.  This makes it easier to create
+        new types of parameterized constraints. (jnapiorkowski)
+
+    * Moose::Meta::TypeConstraint::Union
+      - Changed the way Union types canonicalize their names to follow
+        the normalized TC naming rules, which means we strip all
+        whitespace. (jnapiorkowski)
+
+    * Moose::Util::TypeConstraints
+      - Parameter and Union args are now sorted, this makes Int|Str
+        the same constraint as Str|Int. (jnapiorkowski)
+      - Changes to the way Union types are parsed to more correctly
+        stringify their names. (jnapiorkowski)
+      - When creating a parameterized type, we now use the new
+        parameterize method. (jnapiorkowski)
+      - Incoming type constraint strings are now normalized to remove
+        all whitespace differences. (jnapiorkowski)
+      - Changed the way we parse type constraint strings so that we now
+        match TC[Int,Int,...] and TC[name=>Str] as parameterized type
+        constraints.  This lays the foundation for more flexible type
+        constraint implementations.
+
+    * Tests and docs for all the above. (jnapiorkowski)
+
+    * Moose::Exporter
+    * Moose
+      - Moose::Exporter will no longer remove a subroutine that the
+        exporting package re-exports. Moose re-exports the
+        Carp::confess function, among others. The reasoning is that we
+        cannot know whether you have also explicitly imported those
+        functions for your own use, so we err on the safe side and
+        always keep them. (Dave Rolsky)
+        - added tests for this (rafl)
+
+    * Moose::Meta::Class
+      - Changes to how we fix metaclass compatibility that are much
+        too complicated to go into. The summary is that Moose is much
+        less likely to complain about metaclass incompatibility
+        now. In particular, if two metaclasses differ because
+        Moose::Util::MetaRole was used on the two corresponding
+        classes, then the difference in roles is reconciled for the
+        subclass's metaclass. (Dave Rolsky)
+      - Squashed an warning in _process_attribute (thepler)
+
+    * Moose::Meta::Role
+      - throw exceptions (sooner) for invalid attribute names (thepler)
+        - added tests for this (thepler)
+
+    * Moose::Util::MetaRole
+      - If you explicitly set a constructor or destructor class for a
+        metaclass object, and then applied roles to the metaclass,
+        that explicitly set class would be lost and replaced with the
+        default.
+
+    * Moose::Meta::Class
+    * Moose::Meta::Attribute
+    * Moose::Meta::Method
+    * Moose
+    * Moose::Object
+    * Moose::Error::Default
+    * Moose::Error::Croak
+    * Moose::Error::Confess
+      - All instances of confess() changed to use overridable
+        C<throw_error> method. This method ultimately calls a class
+        constructor, and you can change the class being called. In
+        addition, errors now pass more information than just a string.
+        The default C<error_class> behaves like C<Carp::confess>, so
+        the behavior is not visibly different for end users.
+
+0.57 Wed September 3, 2008
+    * Moose::Intro
+      - A new bit of doc intended to introduce folks familiar with
+        "standard" Perl 5 OO to Moose concepts. (Dave Rolsky)
+
+    * Moose::Unsweetened
+      - Shows examples of two classes, each done first with and then
+        without Moose. This makes a nice parallel to
+        Moose::Intro. (Dave Rolsky)
+
+    * Moose::Util::TypeConstraints
+      - Fixed a bug in find_or_parse_type_constraint so that it
+        accepts a Moose::Meta::TypeConstraint object as the parent
+        type, not just a name (jnapiorkowski)
+        - added tests (jnapiorkowski)
+
+    * Moose::Exporter
+      - If Sub::Name was not present, unimporting failed to actually
+        remove some sugar subs, causing test failures (Dave Rolsky)
+
+0.56 Mon September 1, 2008
+    For those not following the series of dev releases, there are
+    several major changes in this release of Moose.
+      ! Moose::init_meta should now be called as a method. See the
+        docs for details.
+
+      - Major performance improvements by nothingmuch.
+
+      - New modules for extension writers, Moose::Exporter and
+        Moose::Util::MetaRole by Dave Rolsky.
+
+      - Lots of doc improvements and additions, especially in the
+        cookbook sections.
+
+      - Various bug fixes.
+
+    * Removed all references to the experimental-but-no-longer-needed
+      Moose::Meta::Role::Application::ToMetaclassInstance.
+
+    * Require Class::MOP 0.65.
+
+0.55_04 Sat August 30, 2008
+    * Moose::Util::MetaRole
+    * Moose::Cookbook::Extending::Recipe2
+      - This simplifies the application of roles to any meta class, as
+        well as the base object class. Reimplemented metaclass traits
+        using this module. (Dave Rolsky)
+
+    * Moose::Cookbook::Extending::Recipe1
+      - This a new recipe, an overview of various ways to write Moose
+        extensions (Dave Rolsky)
+
+    * Moose::Cookbook::Extending::Recipe3
+    * Moose::Cookbook::Extending::Recipe4
+      - These used to be Extending::Recipe1 and Extending::Recipe2,
+        respectively.
+
+0.55_03 Fri August 29, 2008
+    * No changes from 0.55_02 except increasing the Class::MOP
+      dependency to 0.64_07.
+
+0.55_02 Fri August 29, 2008
     * Makefile.PL and Moose.pm
       - explicitly require Perl 5.8.0+ (Dave Rolsky)
 
@@ -9,17 +381,26 @@ Revision history for Perl extension Moose
         found (t0m).
       
     * Moose::Meta::TypeConstraint
-      - predicate methods (equals/is_a_type_of/is_subtype_of) now 
+      - Predicate methods (equals/is_a_type_of/is_subtype_of) now
         return false if the type you specify cannot be found in the
-        type registry, rather than throwing an unhelpful and coincidental
-        exception. The behavior is now in line with to 
-        $ob->isa('DoesNotExist') (t0m).
+        type registry, rather than throwing an unhelpful and
+        coincidental exception. (t0m).
         - added docs & test for this (t0m)
     
     * Moose::Meta::TypeConstraint::Registry
       - add_type_constraint now throws an exception if a parameter is
         not supplied (t0m).
         - added docs & test for this (t0m)
+
+    * Moose::Cookbook::FAQ
+      - Added a faq entry on the difference between "role" and "trait"
+        (t0m)
+
+    * Moose::Meta::Role
+      - Fixed a bug that caused role composition to not see a required
+        method when that method was provided by another role being
+        composed at the same time. (Dave Rolsky)
+        - test and bug finding (tokuhirom)
         
 0.55_01 Wed August 20, 2008
 
@@ -298,7 +679,7 @@ Revision history for Perl extension Moose
 
 0.45 Saturday, May 24, 2008
     * Moose
-      - Because of work in Class::MOP 0.56, all 
+      - Because of work in Class::MOP 0.57, all 
         XS based functionality is now optional
         and a Pure Perl version is supplied
         - the CLASS_MOP_NO_XS environment variable
@@ -335,7 +716,7 @@ Revision history for Perl extension Moose
 
     * Moose::Meta::Class
       - added same 'add_package_symbol' fix as in 
-        Class::MOP 0.56
+        Class::MOP 0.57
 
     * Moose::Util
       - does_role now handles non-Moose classes 
@@ -883,7 +1264,7 @@ Revision history for Perl extension Moose
           ArrayRef[Int]    # array or integers
           HashRef[Object]  # a hash with object values
       They can also be nested:
-          ArrayRef[HashRef[RegExpr]] # an array of hashes with regexpr values
+          ArrayRef[HashRef[RegexpRef]] # an array of hashes with regex values
       And work with the type unions as well:
           ArrayRef[Int | Str]  # array of integers of strings
 
@@ -1152,7 +1533,7 @@ Revision history for Perl extension Moose
       - added tests to assure we work with Module::Refresh
       - added stricter test skip logic in the Moose POOP
         test, ask Rob Kinyon why.
-        - *cough* DBM::Deep 1.0 backwards compatability sucks *cough* ;)
+        - *cough* DBM::Deep 1.0 backwards compatibility sucks *cough* ;)
 
 0.18 Sat. March 10, 2007
     ~~ Many, many documentation updates ~~
@@ -1433,7 +1814,7 @@ Revision history for Perl extension Moose
         - 'with' now checks Role validaity and
           accepts more than one Role at a time
         - 'extends' makes metaclass adjustments as
-           needed to ensure metaclass compatability
+           needed to ensure metaclass compatibility
 
     * Moose::Role
       - refactored the keyword exports

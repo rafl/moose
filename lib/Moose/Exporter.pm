@@ -3,9 +3,13 @@ package Moose::Exporter;
 use strict;
 use warnings;
 
-use Carp qw( confess );
+our $VERSION   = '0.64';
+$VERSION = eval $VERSION;
+our $AUTHORITY = 'cpan:STEVAN';
+
 use Class::MOP;
 use List::MoreUtils qw( first_index uniq );
+use Moose::Util::MetaRole;
 use Sub::Exporter;
 
 
@@ -32,8 +36,11 @@ sub build_import_methods {
 
     my @exports_from = $class->_follow_also( $exporting_package );
 
-    my $exports
-        = $class->_make_sub_exporter_params( $exporting_package, @exports_from );
+    my $export_recorder = {};
+
+    my ( $exports, $is_removable )
+        = $class->_make_sub_exporter_params(
+        [ $exporting_package, @exports_from ], $export_recorder );
 
     my $exporter = Sub::Exporter::build_exporter(
         {
@@ -48,9 +55,8 @@ sub build_import_methods {
     my $import = $class->_make_import_sub( $exporting_package, $exporter,
         \@exports_from, $args{_export_to_main} );
 
-    my $unimport
-        = $class->_make_unimport_sub( $exporting_package, \@exports_from,
-        [ keys %{$exports} ] );
+    my $unimport = $class->_make_unimport_sub( $exporting_package, $exports,
+        $is_removable, $export_recorder );
 
     return ( $import, $unimport )
 }
@@ -70,7 +76,7 @@ sub build_import_methods {
     sub _follow_also_real {
         my $exporting_package = shift;
 
-        die "Package in also ($exporting_package) does not seem to use MooseX::Exporter"
+        die "Package in also ($exporting_package) does not seem to use Moose::Exporter"
             unless exists $EXPORT_SPEC{$exporting_package};
 
         my $also = $EXPORT_SPEC{$exporting_package}{also};
@@ -81,7 +87,7 @@ sub build_import_methods {
 
         for my $package (@also)
         {
-            die "Circular reference in also parameter to MooseX::Exporter between $exporting_package and $package"
+            die "Circular reference in also parameter to Moose::Exporter between $exporting_package and $package"
                 if $seen->{$package};
 
             $seen->{$package} = 1;
@@ -92,12 +98,14 @@ sub build_import_methods {
 }
 
 sub _make_sub_exporter_params {
-    my $class    = shift;
-    my @packages = @_;
+    my $class             = shift;
+    my $packages          = shift;
+    my $export_recorder   = shift;
 
     my %exports;
+    my %is_removable;
 
-    for my $package (@packages) {
+    for my $package ( @{$packages} ) {
         my $args = $EXPORT_SPEC{$package}
             or die "The $package package does not use Moose::Exporter\n";
 
@@ -107,11 +115,15 @@ sub _make_sub_exporter_params {
                 \&{ $package . '::' . $name };
             };
 
+            my $fq_name = $package . '::' . $name;
+
             $exports{$name} = $class->_make_wrapped_sub(
-                $package,
-                $name,
-                $sub
+                $fq_name,
+                $sub,
+                $export_recorder,
             );
+
+            $is_removable{$name} = 1;
         }
 
         for my $name ( @{ $args->{as_is} } ) {
@@ -119,119 +131,151 @@ sub _make_sub_exporter_params {
 
             if ( ref $name ) {
                 $sub  = $name;
-                $name = ( Class::MOP::get_code_info($name) )[1];
+
+                # Even though Moose re-exports things from Carp &
+                # Scalar::Util, we don't want to remove those at
+                # unimport time, because the importing package may
+                # have imported them explicitly ala
+                #
+                # use Carp qw( confess );
+                #
+                # This is a hack. Since we can't know whether they
+                # really want to keep these subs or not, we err on the
+                # safe side and leave them in.
+                my $coderef_pkg;
+                ( $coderef_pkg, $name ) = Class::MOP::get_code_info($name);
+
+                $is_removable{$name} = $coderef_pkg eq $package ? 1 : 0;
             }
             else {
                 $sub = do {
                     no strict 'refs';
                     \&{ $package . '::' . $name };
                 };
+
+                $is_removable{$name} = 1;
             }
+
+            $export_recorder->{$sub} = 1;
 
             $exports{$name} = sub {$sub};
         }
     }
 
-    return \%exports;
+    return ( \%exports, \%is_removable );
 }
 
-{
-    # This variable gets closed over in each export _generator_. Then
-    # in the generator we grab the value and close over it _again_ in
-    # the real export, so it gets captured each time the generator
-    # runs.
-    #
-    # In the meantime, we arrange for the import method we generate to
-    # set this variable to the caller each time it is called.
-    #
-    # This is all a bit confusing, but it works.
-    my $CALLER;
+our $CALLER;
 
-    sub _make_wrapped_sub {
-        my $class             = shift;
-        my $exporting_package = shift;
-        my $name              = shift;
-        my $sub               = shift;
+sub _make_wrapped_sub {
+    my $self            = shift;
+    my $fq_name         = shift;
+    my $sub             = shift;
+    my $export_recorder = shift;
 
-        # We need to set the package at import time, so that when
-        # package Foo imports has(), we capture "Foo" as the
-        # package. This lets other packages call Foo::has() and get
-        # the right package. This is done for backwards compatibility
-        # with existing production code, not because this is a good
-        # idea ;)
-        return sub {
-            my $caller = $CALLER;
-            Class::MOP::subname( $exporting_package . '::'
-                    . $name => sub { $sub->( $caller, @_ ) } );
-        };
-    }
+    # We need to set the package at import time, so that when
+    # package Foo imports has(), we capture "Foo" as the
+    # package. This lets other packages call Foo::has() and get
+    # the right package. This is done for backwards compatibility
+    # with existing production code, not because this is a good
+    # idea ;)
+    return sub {
+        my $caller = $CALLER;
 
-    sub _make_import_sub {
-        shift;
-        my $exporting_package = shift;
-        my $exporter          = shift;
-        my $exports_from      = shift;
-        my $export_to_main    = shift;
+        my $wrapper = $self->_make_wrapper($caller, $sub, $fq_name);
 
-        return sub {
-            # I think we could use Sub::Exporter's collector feature
-            # to do this, but that would be rather gross, since that
-            # feature isn't really designed to return a value to the
-            # caller of the exporter sub.
-            #
-            # Also, this makes sure we preserve backwards compat for
-            # _get_caller, so it always sees the arguments in the
-            # expected order.
-            my $traits;
-            ($traits, @_) = Moose::Exporter::_strip_traits(@_);
+        my $sub = Class::MOP::subname($fq_name => $wrapper);
 
-            # Normally we could look at $_[0], but in some weird cases
-            # (involving goto &Moose::import), $_[0] ends as something
-            # else (like Squirrel).
-            my $class = $exporting_package;
+        $export_recorder->{$sub} = 1;
 
-            $CALLER = Moose::Exporter::_get_caller(@_);
-
-            # this works because both pragmas set $^H (see perldoc
-            # perlvar) which affects the current compilation -
-            # i.e. the file who use'd us - which is why we don't need
-            # to do anything special to make it affect that file
-            # rather than this one (which is already compiled)
-
-            strict->import;
-            warnings->import;
-
-            # we should never export to main
-            if ( $CALLER eq 'main' && ! $export_to_main ) {
-                warn
-                    qq{$class does not export its sugar to the 'main' package.\n};
-                return;
-            }
-
-            my $did_init_meta;
-            for my $c ( grep { $_->can('init_meta') } $class, @{$exports_from} ) {
-
-                $c->init_meta( for_class => $CALLER );
-                $did_init_meta = 1;
-            }
-
-            if ($did_init_meta) {
-                _apply_meta_traits( $CALLER, $traits );
-            }
-            elsif ( $traits && @{$traits} ) {
-                confess
-                    "Cannot provide traits when $class does not have an init_meta() method";
-            }
-
-            goto $exporter;
-        };
-    }
+        return $sub;
+    };
 }
+
+sub _make_wrapper {
+    shift;
+    my $caller  = shift;
+    my $sub     = shift;
+    my $fq_name = shift;
+
+    return sub { $sub->($caller, @_) };
+}
+
+sub _make_import_sub {
+    shift;
+    my $exporting_package = shift;
+    my $exporter          = shift;
+    my $exports_from      = shift;
+    my $export_to_main    = shift;
+
+    return sub {
+
+        # I think we could use Sub::Exporter's collector feature
+        # to do this, but that would be rather gross, since that
+        # feature isn't really designed to return a value to the
+        # caller of the exporter sub.
+        #
+        # Also, this makes sure we preserve backwards compat for
+        # _get_caller, so it always sees the arguments in the
+        # expected order.
+        my $traits;
+        ( $traits, @_ ) = _strip_traits(@_);
+
+        # Normally we could look at $_[0], but in some weird cases
+        # (involving goto &Moose::import), $_[0] ends as something
+        # else (like Squirrel).
+        my $class = $exporting_package;
+
+        $CALLER = _get_caller(@_);
+
+        # this works because both pragmas set $^H (see perldoc
+        # perlvar) which affects the current compilation -
+        # i.e. the file who use'd us - which is why we don't need
+        # to do anything special to make it affect that file
+        # rather than this one (which is already compiled)
+
+        strict->import;
+        warnings->import;
+
+        # we should never export to main
+        if ( $CALLER eq 'main' && !$export_to_main ) {
+            warn
+                qq{$class does not export its sugar to the 'main' package.\n};
+            return;
+        }
+
+        my $did_init_meta;
+        for my $c ( grep { $_->can('init_meta') } $class, @{$exports_from} ) {
+            # init_meta can apply a role, which when loaded uses
+            # Moose::Exporter, which in turn sets $CALLER, so we need
+            # to protect against that.
+            local $CALLER = $CALLER;
+            $c->init_meta( for_class => $CALLER );
+            $did_init_meta = 1;
+        }
+
+        if ( $did_init_meta && @{$traits} ) {
+            # The traits will use Moose::Role, which in turn uses
+            # Moose::Exporter, which in turn sets $CALLER, so we need
+            # to protect against that.
+            local $CALLER = $CALLER;
+            _apply_meta_traits( $CALLER, $traits );
+        }
+        elsif ( @{$traits} ) {
+            Moose->throw_error(
+                "Cannot provide traits when $class does not have an init_meta() method"
+            );
+        }
+
+        goto $exporter;
+    };
+}
+
 
 sub _strip_traits {
     my $idx = first_index { $_ eq '-traits' } @_;
 
-    return ( undef, @_ ) unless $idx >= 0 && $#_ >= $idx + 1;
+    return ( [], @_ ) unless $idx >= 0 && $#_ >= $idx + 1;
 
     my $traits = $_[ $idx + 1 ];
 
@@ -245,31 +289,25 @@ sub _strip_traits {
 sub _apply_meta_traits {
     my ( $class, $traits ) = @_;
 
-    return
-        unless $traits && @$traits;
+    return unless @{$traits};
 
     my $meta = $class->meta();
 
     my $type = ( split /::/, ref $meta )[-1]
-        or confess
+        or Moose->throw_error(
         'Cannot determine metaclass type for trait application . Meta isa '
-        . ref $meta;
+        . ref $meta );
 
-    # We can only call does_role() on Moose::Meta::Class objects, and
-    # we can only do that on $meta->meta() if it has already had at
-    # least one trait applied to it. By default $meta->meta() returns
-    # a Class::MOP::Class object (not a Moose::Meta::Class).
-    my @traits = grep {
-        $meta->meta()->can('does_role')
-            ? not $meta->meta()->does_role($_)
-            : 1
-        }
-        map { Moose::Util::resolve_metatrait_alias( $type => $_ ) } @$traits;
+    my @resolved_traits
+        = map { Moose::Util::resolve_metatrait_alias( $type => $_ ) }
+        @$traits;
 
-    return unless @traits;
+    return unless @resolved_traits;
 
-    Moose::Util::apply_all_roles_with_method( $meta,
-        'apply_to_metaclass_instance', \@traits );
+    Moose::Util::MetaRole::apply_metaclass_roles(
+        for_class       => $class,
+        metaclass_roles => \@resolved_traits,
+    );
 }
 
 sub _get_caller {
@@ -287,39 +325,38 @@ sub _get_caller {
 sub _make_unimport_sub {
     shift;
     my $exporting_package = shift;
-    my $sources           = shift;
-    my $keywords          = shift;
+    my $exports           = shift;
+    my $is_removable      = shift;
+    my $export_recorder   = shift;
 
     return sub {
         my $caller = scalar caller();
         Moose::Exporter->_remove_keywords(
             $caller,
-            [ $exporting_package, @{$sources} ],
-            $keywords
+            [ keys %{$exports} ],
+            $is_removable,
+            $export_recorder,
         );
     };
 }
 
 sub _remove_keywords {
     shift;
-    my $package  = shift;
-    my $sources  = shift;
-    my $keywords = shift;
-
-    my %sources = map { $_ => 1 } @{$sources};
+    my $package          = shift;
+    my $keywords         = shift;
+    my $is_removable     = shift;
+    my $recorded_exports = shift;
 
     no strict 'refs';
 
-    # loop through the keywords ...
-    foreach my $name ( @{$keywords} ) {
+    foreach my $name ( @{ $keywords } ) {
+        next unless $is_removable->{$name};
 
-        # if we find one ...
         if ( defined &{ $package . '::' . $name } ) {
-            my $keyword = \&{ $package . '::' . $name };
+            my $sub = \&{ $package . '::' . $name };
 
             # make sure it is from us
-            my ($pkg_name) = Class::MOP::get_code_info($keyword);
-            next unless $sources{$pkg_name};
+            next unless $recorded_exports->{$sub};
 
             # and if it is from us, then undef the slot
             delete ${ $package . '::' }{$name};
@@ -346,10 +383,18 @@ Moose::Exporter - make an import() and unimport() just like Moose.pm
   use Moose::Exporter;
 
   Moose::Exporter->setup_import_methods(
-      with_caller => [ 'sugar1', 'sugar2' ],
+      with_caller => [ 'has_rw', 'sugar2' ],
       as_is       => [ 'sugar3', \&Some::Random::thing ],
       also        => 'Moose',
   );
+
+  sub has_rw {
+      my ($caller, $name, %options) = @_;
+      Class::MOP::Class->initialize($caller)->add_attribute($name,
+          is => 'rw',
+          %options,
+      );
+  }
 
   # then later ...
   package MyApp::User;
@@ -357,7 +402,7 @@ Moose::Exporter - make an import() and unimport() just like Moose.pm
   use MyApp::Moose;
 
   has 'name';
-  sugar1 'do your thing';
+  has_rw 'size';
   thing;
 
   no MyApp::Moose;
@@ -403,6 +448,11 @@ This a list of function names or sub references to be exported
 as-is. You can identify a subroutine by reference, which is handy to
 re-export some other module's functions directly by reference
 (C<\&Some::Package::function>).
+
+If you do export some other packages function, this function will
+never be removed by the C<unimport> method. The reason for this is we
+cannot know if the caller I<also> explicitly imported the sub
+themselves, and therefore wants to keep it.
 
 =item * also => $name or \@names
 

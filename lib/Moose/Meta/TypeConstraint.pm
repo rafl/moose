@@ -8,12 +8,11 @@ use metaclass;
 use overload '""'     => sub { shift->name },   # stringify to tc name
              fallback => 1;
 
-use Carp         'confess';
 use Scalar::Util qw(blessed refaddr);
 
 use base qw(Class::MOP::Object);
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -60,14 +59,26 @@ __PACKAGE__->meta->add_attribute('package_defined_in' => (
 
 sub new {
     my $class = shift;
-    my $self  = $class->_new(@_);
+    my ($first, @rest) = @_;
+    my %args = ref $first ? %$first : $first ? ($first, @rest) : ();
+    $args{name} = $args{name} ? "$args{name}" : "__ANON__";
+    
+    my $self  = $class->_new(%args);
     $self->compile_type_constraint()
         unless $self->_has_compiled_type_constraint;
     return $self;
 }
 
-sub coerce   { ((shift)->coercion || confess "Cannot coerce without a type coercion")->coerce(@_) }
-sub check    { $_[0]->_compiled_type_constraint->($_[1]) ? 1 : undef }
+
+
+sub coerce   { ((shift)->coercion || Moose->throw_error("Cannot coerce without a type coercion"))->coerce(@_) }
+
+sub check {
+    my ($self, @args) = @_;
+    my $constraint_subref = $self->_compiled_type_constraint;
+    return $constraint_subref->(@args) ? 1 : undef;
+}
+
 sub validate {
     my ($self, $value) = @_;
     if ($self->_compiled_type_constraint->($value)) {
@@ -155,9 +166,9 @@ sub _actually_compile_type_constraint {
 
     my $check = $self->constraint;
     (defined $check)
-        || confess "Could not compile type constraint '"
+        || Moose->throw_error("Could not compile type constraint '"
                 . $self->name
-                . "' because no constraint check";
+                . "' because no constraint check");
 
     return $self->_compile_subtype($check)
         if $self->has_parent;
@@ -170,7 +181,7 @@ sub _compile_hand_optimized_type_constraint {
 
     my $type_constraint = $self->hand_optimized_type_constraint;
 
-    confess unless ref $type_constraint;
+    Moose->throw_error("Hand optimized type constraint is not a code reference") unless ref $type_constraint;
 
     return $type_constraint;
 }
@@ -205,8 +216,9 @@ sub _compile_subtype {
         } else {
             return Class::MOP::subname($self->name, sub {
                 return undef unless $optimized_parent->($_[0]);
-                local $_ = $_[0];
-                $check->($_[0]);
+                my (@args) = @_;
+                local $_ = $args[0];
+                $check->(@args);
             });
         }
     } else {
@@ -214,9 +226,10 @@ sub _compile_subtype {
         my @checks = @parents;
         push @checks, $check if $check != $null_constraint;
         return Class::MOP::subname($self->name => sub {
-            local $_ = $_[0];
+            my (@args) = @_;
+            local $_ = $args[0];
             foreach my $check (@checks) {
-                return undef unless $check->($_[0]);
+                return undef unless $check->(@args);
             }
             return 1;
         });
@@ -229,8 +242,9 @@ sub _compile_type {
     return $check if $check == $null_constraint; # Item, Any
 
     return Class::MOP::subname($self->name => sub {
-        local $_ = $_[0];
-        $check->($_[0]);
+        my (@args) = @_;
+        local $_ = $args[0];
+        $check->(@args);
     });
 }
 
@@ -245,6 +259,12 @@ sub _collect_all_parents {
         $current = $current->parent;
     }
     return @parents;
+}
+
+sub create_child_type {
+    my ($self, %opts) = @_;
+    my $class = ref $self;
+    return $class->new(%opts, parent => $self);
 }
 
 ## this should get deprecated actually ...
@@ -282,22 +302,23 @@ If you wish to use features at this depth, please come to the
 
 =item B<equals ($type_name_or_object)>
 
-This checks the current type against the supplied type (only). 
-Returns false either if the type name or object supplied 
-does not match, or if a type name isn't found in the type registry.
+This checks the current type against the supplied type (only).
+Returns false if the two types are not equal. It also returns false if
+you provide the type as a name, and the type name isn't found in the
+type registry.
 
 =item B<is_a_type_of ($type_name_or_object)>
 
 This checks the current type against the supplied type, or if the
-current type is a sub-type of the type name or object supplied. 
-Returns false if the current type is not descended from the supplied
-type, of if the supplied type isn't found in the type registry.
+current type is a sub-type of the type name or object supplied. It
+also returns false if you provide the type as a name, and the type
+name isn't found in the type registry.
 
 =item B<is_subtype_of ($type_name_or_object)>
 
-This checks the current type is a sub-type of the type name or object supplied. 
-Returns false if the current type is not descended from the supplied
-type, of if the supplied type isn't found in the type registry.
+This checks the current type is a sub-type of the type name or object
+supplied. It also returns false if you provide the type as a name, and
+the type name isn't found in the type registry.
 
 =item B<compile_type_constraint>
 
@@ -323,29 +344,46 @@ The name of the type in the global type registry.
 
 =item B<parent>
 
-The parent type of this type.
+This type's parent type.
 
 =item B<has_parent>
 
-If this type has a parent type.
+Returns true if this type has a parent type.
 
 =item B<parents>
 
+Synonym for C<parent>.
+
 =item B<constraint>
+
+Returns this type's constraint.  This is the value of C<where> provided
+when defining a type.
 
 =item B<has_message>
 
+Returns true if this type has a message.
+
 =item B<message>
+
+Returns this type's message.
 
 =item B<get_message ($value)>
 
+Generate message for $value.
+
 =item B<has_coercion>
 
+Returns true if this type has a coercion.
+
 =item B<coercion>
+
+Returns this type's L<Moose::Meta::TypeCoercion> if one exists.
 
 =item B<hand_optimized_type_constraint>
 
 =item B<has_hand_optimized_type_constraint>
+
+=item B<create_child_type>
 
 =back
 

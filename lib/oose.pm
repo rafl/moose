@@ -5,7 +5,7 @@ use warnings;
 
 use Class::MOP;
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -49,7 +49,7 @@ perl -e'package Foo; use Moose; ...' was annoying me.
 
 =head1 INTERFACE 
 
-oose provides exactly one method and it's automically called by perl:
+oose provides exactly one method and it's automatically called by perl:
 
 =over 4
 

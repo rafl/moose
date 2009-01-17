@@ -3,7 +3,9 @@
 use strict;
 use warnings;
 
-use Test::More tests => 23;
+use lib 't/lib', 'lib';
+
+use Test::More tests => 32;
 use Test::Exception;
 
 {
@@ -170,3 +172,51 @@ is( Role::Foo->meta()->simple(), 5,
     like( $@, qr/does not have an init_meta/,
           '... and error provides a useful explanation' );
 }
+
+{
+    package Foo::Subclass;
+
+    use Moose -traits => [ 'My::SimpleTrait3' ];
+
+    extends 'Foo';
+}
+
+can_ok( Foo::Subclass->meta(), 'simple' );
+is( Foo::Subclass->meta()->simple(), 5,
+    'Foo::Subclass->meta()->simple() returns expected value' );
+is( Foo::Subclass->meta()->simple2(), 55,
+    'Foo::Subclass->meta()->simple2() returns expected value' );
+can_ok( Foo::Subclass->meta(), 'attr2' );
+is( Foo::Subclass->meta()->attr2(), 'something',
+    'Foo::Subclass->meta()->attr2() returns expected value' );
+
+{
+
+    package Class::WithAlreadyPresentTrait;
+    use Moose -traits => 'My::SimpleTrait';
+
+    has an_attr => ( is => 'ro' );
+}
+
+lives_ok {
+    my $instance = Class::WithAlreadyPresentTrait->new( an_attr => 'value' );
+    is( $instance->an_attr, 'value', 'Can get value' );
+}
+'Can create instance and access attributes';
+
+{
+
+    package Class::WhichLoadsATraitFromDisk;
+
+    # Any role you like here, the only important bit is that it gets
+    # loaded from disk and has not already been defined.
+    use Moose -traits => 'Role::Parent';
+
+    has an_attr => ( is => 'ro' );
+}
+
+lives_ok {
+    my $instance = Class::WhichLoadsATraitFromDisk->new( an_attr => 'value' );
+    is( $instance->an_attr, 'value', 'Can get value' );
+}
+'Can create instance and access attributes';

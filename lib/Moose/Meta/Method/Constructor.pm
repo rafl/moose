@@ -4,10 +4,9 @@ package Moose::Meta::Method::Constructor;
 use strict;
 use warnings;
 
-use Carp         'confess';
 use Scalar::Util 'blessed', 'weaken', 'looks_like_number';
 
-our $VERSION   = '0.57';
+our $VERSION   = '0.64';
 our $AUTHORITY = 'cpan:STEVAN';
 
 use base 'Moose::Meta::Method',
@@ -17,11 +16,13 @@ sub new {
     my $class   = shift;
     my %options = @_;
 
-    (exists $options{options} && ref $options{options} eq 'HASH')
-        || confess "You must pass a hash of options";
+    my $meta = $options{metaclass};
+
+    (ref $options{options} eq 'HASH')
+        || $class->throw_error("You must pass a hash of options", data => $options{options});
 
     ($options{package_name} && $options{name})
-        || confess "You must supply the package_name and name parameters $Class::MOP::Method::UPGRADE_ERROR_TEXT";
+        || $class->throw_error("You must supply the package_name and name parameters $Class::MOP::Method::UPGRADE_ERROR_TEXT");
 
     my $self = bless {
         # from our superclass
@@ -30,10 +31,10 @@ sub new {
         'name'          => $options{name},
         # specific to this subclass
         'options'       => $options{options},
-        'meta_instance' => $options{metaclass}->get_meta_instance,
-        'attributes'    => [ $options{metaclass}->compute_all_applicable_attributes ],
+        'meta_instance' => $meta->get_meta_instance,
+        'attributes'    => [ $meta->compute_all_applicable_attributes ],
         # ...
-        'associated_metaclass' => $options{metaclass},
+        'associated_metaclass' => $meta,
     } => $class;
 
     # we don't want this creating
@@ -44,6 +45,64 @@ sub new {
     $self->initialize_body;
 
     return $self;
+}
+
+sub can_be_inlined {
+    my $self      = shift;
+    my $metaclass = $self->associated_metaclass;
+
+    my $expected_class = $self->_expected_constructor_class;
+
+    # If any of our parents have been made immutable, we are okay to
+    # inline our own new method. The assumption is that an inlined new
+    # method provided by a parent does not actually get used by
+    # children anyway.
+    for my $meta (
+        grep { $_->is_immutable }
+        map  { ( ref $metaclass )->initialize($_) }
+        grep { $_ ne $expected_class }
+        $metaclass->linearized_isa
+        ) {
+        my $transformer = $meta->get_immutable_transformer;
+
+        # This is actually a false positive if we're in a subclass of
+        # this class, _and_ the expected class is not overridden (but
+        # should be), and the real expected class is actually
+        # immutable itself (see Fey::Object::Table for an example of
+        # how this can happen). I'm not sure how to actually handle
+        # that case, since it's effectively a bug in the subclass (for
+        # not overriding _expected_constructor_class).
+        return 1 if $transformer->inlined_constructor;
+    }
+
+    if ( my $constructor = $metaclass->find_method_by_name( $self->name ) ) {
+        my $class = $self->associated_metaclass->name;
+
+        if ( $constructor->body != $expected_class->can('new') ) {
+            my $warning
+                = "Not inlining a constructor for $class since it is not"
+                . " inheriting the default $expected_class constructor\n";
+
+            $warning .= " (constructor has method modifiers which would be lost if it were inlined)\n"
+                if $constructor->isa('Class::MOP::Method::Wrapped');
+
+            warn $warning;
+
+            return 0;
+        }
+        else {
+            return 1;
+        }
+    }
+
+    # This would be a rather weird case where we have no constructor
+    # in the inheritance chain.
+    return 1;
+}
+
+# This is here so can_be_inlined can be inherited by MooseX modules.
+sub _expected_constructor_class {
+    return 'Moose::Object';
 }
 
 ## accessors
@@ -58,7 +117,7 @@ sub associated_metaclass { (shift)->{'associated_metaclass'} }
 
 # this was changed in 0.41, but broke MooseX::Singleton, so try to catch
 # any other code using the original broken spelling
-sub intialize_body { confess "Please correct the spelling of 'intialize_body' to 'initialize_body'" }
+sub intialize_body { Moose->throw_error("Please correct the spelling of 'intialize_body' to 'initialize_body'") }
 
 sub initialize_body {
     my $self = shift;
@@ -92,6 +151,8 @@ sub initialize_body {
 
     my $code;
     {
+        my $meta = $self; # FIXME for _inline_throw_error...
+
         # NOTE:
         # create the nessecary lexicals
         # to be picked up in the eval
@@ -115,7 +176,7 @@ sub initialize_body {
         } @type_constraints;
 
         $code = eval $source;
-        confess "Could not eval the constructor :\n\n$source\n\nbecause :\n\n$@" if $@;
+        $self->throw_error("Could not eval the constructor :\n\n$source\n\nbecause :\n\n$@", error => $@, data => $source ) if $@;
     }
     $self->{'body'} = $code;
 }
@@ -128,7 +189,7 @@ sub _generate_BUILDARGS {
     if ( $args eq '@_' and ( !$buildargs or $buildargs->body == \&Moose::Object::BUILDARGS ) ) {
         return join("\n",
             'do {',
-            'confess "Single parameters to new() must be a HASH ref"',
+            $self->_inline_throw_error('"Single parameters to new() must be a HASH ref"', 'data => $_[0]'),
             '    if scalar @_ == 1 && defined $_[0] && ref($_[0]) ne q{HASH};',
             '(scalar @_ == 1) ? {%{$_[0]}} : {@_};',
             '}',
@@ -185,7 +246,7 @@ sub _generate_slot_initializer {
 
     if ($is_moose && defined($attr->init_arg) && $attr->is_required && !$attr->has_default && !$attr->has_builder) {
         push @source => ('(exists $params->{\'' . $attr->init_arg . '\'}) ' .
-                        '|| confess "Attribute (' . $attr->name . ') is required";');
+                        '|| ' . $self->_inline_throw_error('"Attribute (' . $attr->name . ') is required"') .';');
     }
 
     if (($attr->has_default || $attr->has_builder) && !($is_moose && $attr->is_lazy)) {
@@ -311,11 +372,11 @@ sub _generate_type_coercion {
 sub _generate_type_constraint_check {
     my ($self, $attr, $type_constraint_cv, $type_constraint_obj, $value_name) = @_;
     return (
-        $type_constraint_cv . '->(' . $value_name . ')'
-        . "\n\t" . '|| confess "Attribute (' 
+        $self->_inline_throw_error('"Attribute (' # FIXME add 'dad'
         . $attr->name 
         . ') does not pass the type constraint because: " . ' 
-        . $type_constraint_obj . '->get_message(' . $value_name . ');'
+        . $type_constraint_obj . '->get_message(' . $value_name . ')')
+        . "\n\t unless " .  $type_constraint_cv . '->(' . $value_name . ');'
     );
 }
 
@@ -331,13 +392,7 @@ sub _generate_default_value {
         return '$attrs->[' . $index . ']->default($instance)';
     }
     else {
-        my $default = $attr->default;
-        # make sure to quote strings ...
-        unless (looks_like_number($default)) {
-            $default = "'$default'";
-        }
-
-        return $default;
+        return q{"} . quotemeta( $attr->default ) . q{"};
     }
 }
 
@@ -364,6 +419,8 @@ not particularly useful.
 
 =item B<new>
 
+=item B<can_be_inlined>
+
 =item B<attributes>
 
 =item B<meta_instance>
@@ -373,6 +430,8 @@ not particularly useful.
 =item B<initialize_body>
 
 =item B<associated_metaclass>
+
+=item B<can_be_inlined>
 
 =back
 

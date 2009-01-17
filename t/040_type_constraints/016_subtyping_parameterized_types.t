@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 30;
+use Test::More tests => 39;
 use Test::Exception;
 
 BEGIN {
@@ -26,12 +26,15 @@ lives_ok {
 
     is($p->name, 'HashRef[Int]', '... parent name is correct');
 
-    ok($t->check({ one => 1, two => 2 }), '... validated it correctly');
+    ok($t->check({ one => 1, two => 2 }), '... validated {one=>1, two=>2} correctly');
     ok(!$t->check({ one => "ONE", two => "TWO" }), '... validated it correctly');
 
     ok( $t->equals($t), "equals to self" );
     ok( !$t->equals( $t->parent ), "not equal to parent" );
     ok( $t->parent->equals( $t->parent ), "parent equals to self" );
+
+    ok( !$t->is_a_type_of("ThisTypeDoesNotExist"), "not a non existant type" );
+    ok( !$t->is_subtype_of("ThisTypeDoesNotExist"), "not a subtype of a non existant type" );
 }
 
 lives_ok {
@@ -56,7 +59,7 @@ lives_ok {
     is($p->name, 'HashRef[Int]', '... parent name is correct');
 
     ok($t->check({ one => 1, two => 2 }), '... validated it correctly');
-    ok(!$t->check({ zero => 10, one => 11, two => 12 }), '... validated it correctly');
+    ok(!$t->check({ zero => 10, one => 11, two => 12 }), '... validated { zero => 10, one => 11, two => 12 } correctly');
     ok(!$t->check({ one => "ONE", two => "TWO" }), '... validated it correctly');
 }
 
@@ -84,4 +87,35 @@ lives_ok {
     ok( $t->check({ one => 1, two => 2, three => 3 }), "validated" );
     ok( !$t->check({ one => 1, two => "foo", three => [] }), "failed" );
     ok( !$t->check({ one => 1 }), "failed" );
+}
+
+{
+    ## Because to throw errors in M:M:Parameterizable needs Moose loaded in
+    ## order to throw errors.  In theory the use Moose belongs to that class
+    ## but when I put it there causes all sorts or trouble.  In theory this is
+    ## never a real problem since you are likely to use Moose somewhere when you
+    ## are creating type constraints.
+    use Moose ();
+    
+    my $MyArrayRefInt =  subtype 'MyArrayRefInt',
+        as 'ArrayRef[Int]';
+
+    my $BiggerInt = subtype 'BiggerInt',
+        as 'Int',
+        where {$_>10};
+
+    my $SubOfMyArrayRef = subtype 'SubOfMyArrayRef',
+        as 'MyArrayRefInt[BiggerInt]';
+        
+    ok $MyArrayRefInt->check([1,2,3]), '[1,2,3] is okay';
+    ok ! $MyArrayRefInt->check(["a","b"]), '["a","b"] is not';  
+    ok $BiggerInt->check(100), '100 is  big enough';
+    ok ! $BiggerInt->check(5), '5 is  big enough';   
+    ok $SubOfMyArrayRef->check([15,20,25]), '[15,20,25] is a bunch of big ints';
+    ok ! $SubOfMyArrayRef->check([15,5,25]), '[15,5,25] is NOT a bunch of big ints';
+    
+    throws_ok sub {
+        my $SubOfMyArrayRef = subtype 'SubSubOfMyArrayRef',
+            as 'SubOfMyArrayRef[Str]';        
+    }, qr/Str is not a subtype of BiggerInt/, 'Failed to parameterize with a bad type parameter';
 }

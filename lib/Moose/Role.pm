@@ -5,12 +5,12 @@ use strict;
 use warnings;
 
 use Scalar::Util 'blessed';
-use Carp         'confess', 'croak';
+use Carp         'croak';
 
 use Data::OptList;
 use Sub::Exporter;
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -54,7 +54,7 @@ sub before {
     my $code = pop @_;
 
     for (@_) {
-        croak "Moose::Role do not currently support "
+        croak "Roles do not currently support "
             . ref($_)
             . " references for before method modifiers"
             if ref $_;
@@ -67,7 +67,7 @@ sub after {
 
     my $code = pop @_;
     for (@_) {
-        croak "Moose::Role do not currently support "
+        croak "Roles do not currently support "
             . ref($_)
             . " references for after method modifiers"
             if ref $_;
@@ -79,7 +79,7 @@ sub around {
     my $meta = Moose::Meta::Role->initialize(shift);
     my $code = pop @_;
     for (@_) {
-        croak "Moose::Role do not currently support "
+        croak "Roles do not currently support "
             . ref($_)
             . " references for around method modifiers"
             if ref $_;
@@ -100,11 +100,11 @@ sub override {
 }
 
 sub inner {
-    croak "Moose::Role cannot support 'inner'";
+    croak "Roles cannot support 'inner'";
 }
 
 sub augment {
-    croak "Moose::Role cannot support 'augment'";
+    croak "Roles cannot support 'augment'";
 }
 
 my $exporter = Moose::Exporter->setup_import_methods(
@@ -123,8 +123,7 @@ sub init_meta {
     my %args = @_;
 
     my $role = $args{for_class}
-        or confess
-        "Cannot call init_meta without specifying a for_class";
+        or Moose->throw_error("Cannot call init_meta without specifying a for_class");
 
     my $metaclass = $args{metaclass} || "Moose::Meta::Role";
 
@@ -136,11 +135,17 @@ sub init_meta {
     if ($role->can('meta')) {
         $meta = $role->meta();
         (blessed($meta) && $meta->isa('Moose::Meta::Role'))
-            || confess "You already have a &meta function, but it does not return a Moose::Meta::Role";
+            || Moose->throw_error("You already have a &meta function, but it does not return a Moose::Meta::Role");
     }
     else {
         $meta = $metaclass->initialize($role);
-        $meta->alias_method('meta' => sub { $meta });
+
+        $meta->add_method(
+            'meta' => sub {
+                # re-initialize so it inherits properly
+                $metaclass->initialize( ref($_[0]) || $_[0] );
+            }
+        );
     }
 
     return $meta;

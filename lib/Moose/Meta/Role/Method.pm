@@ -4,11 +4,11 @@ package Moose::Meta::Role::Method;
 use strict;
 use warnings;
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
-use base 'Class::MOP::Method';
+use base 'Moose::Meta::Method';
 
 1;
 
@@ -24,7 +24,7 @@ Moose::Meta::Role::Method - A Moose Method metaclass for Roles
 
 This is primarily used to mark methods coming from a role 
 as being different. Right now it is nothing but a subclass
-of L<Class::MOP::Method>.
+of L<Moose::Meta::Method>.
 
 =head1 BUGS
 

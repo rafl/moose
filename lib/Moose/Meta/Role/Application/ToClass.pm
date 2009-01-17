@@ -4,12 +4,10 @@ use strict;
 use warnings;
 use metaclass;
 
-use Carp            'confess';
-use Scalar::Util    'blessed';
+use Moose::Util  'english_list';
+use Scalar::Util 'blessed';
 
-use Data::Dumper;
-
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -24,17 +22,21 @@ sub apply {
 sub check_role_exclusions {
     my ($self, $role, $class) = @_;
     if ($class->excludes_role($role->name)) {
-        confess "Conflict detected: " . $class->name . " excludes role '" . $role->name . "'";
+        $class->throw_error("Conflict detected: " . $class->name . " excludes role '" . $role->name . "'");
     }
     foreach my $excluded_role_name ($role->get_excluded_roles_list) {
         if ($class->does_role($excluded_role_name)) {
-            confess "The class " . $class->name . " does the excluded role '$excluded_role_name'";
+            $class->throw_error("The class " . $class->name . " does the excluded role '$excluded_role_name'");
         }
     }
 }
 
 sub check_required_methods {
     my ($self, $role, $class) = @_;
+
+    my @missing;
+    my @is_attr;
+
     # NOTE:
     # we might need to move this down below the
     # the attributes so that we can require any
@@ -46,9 +48,8 @@ sub check_required_methods {
         if (!$class->find_method_by_name($required_method_name)) {
             
             next if $self->is_aliased_method($required_method_name);
-            
-            confess "'" . $role->name . "' requires the method '$required_method_name' " .
-                    "to be implemented by '" . $class->name . "'";
+
+            push @missing, $required_method_name;
         }
         else {
             # NOTE:
@@ -58,9 +59,8 @@ sub check_required_methods {
             my $method = $class->find_method_by_name($required_method_name);
 
             # check if it is a generated accessor ...
-            (!$method->isa('Class::MOP::Method::Accessor'))
-                || confess "'" . $role->name . "' requires the method '$required_method_name' " .
-                           "to be implemented by '" . $class->name . "', the method is only an attribute accessor";
+            push @is_attr, $required_method_name,
+                if $method->isa('Class::MOP::Method::Accessor');
 
             # NOTE:
             # All other tests here have been removed, they were tests
@@ -75,6 +75,43 @@ sub check_required_methods {
             # - SL
         }
     }
+
+    return unless @missing || @is_attr;
+
+    my $error = '';
+
+    if (@missing) {
+        my $noun = @missing == 1 ? 'method' : 'methods';
+
+        my $list
+            = Moose::Util::english_list( map { q{'} . $_ . q{'} } @missing );
+
+        $error
+            .= q{'}
+            . $role->name
+            . "' requires the $noun $list "
+            . "to be implemented by '"
+            . $class->name . q{'};
+    }
+
+    if (@is_attr) {
+        my $noun = @is_attr == 1 ? 'method' : 'methods';
+
+        my $list
+            = Moose::Util::english_list( map { q{'} . $_ . q{'} } @is_attr );
+
+        $error .= "\n" if length $error;
+
+        $error
+            .= q{'}
+            . $role->name
+            . "' requires the $noun $list "
+            . "to be implemented by '"
+            . $class->name
+            . "' but the method is only an attribute accessor";
+    }
+
+    $class->throw_error($error);
 }
 
 sub check_required_attributes {
@@ -103,20 +140,20 @@ sub apply_methods {
     my ($self, $role, $class) = @_;
     foreach my $method_name ($role->get_method_list) {
         
-        next if $self->is_method_excluded($method_name);
-        
-        # it if it has one already
-        if ($class->has_method($method_name) &&
-            # and if they are not the same thing ...
-            $class->get_method($method_name)->body != $role->get_method($method_name)->body) {
-            next;
-        }
-        else {
-            # add it, although it could be overriden
-            $class->alias_method(
-                $method_name,
-                $role->get_method($method_name)
-            );         
+        unless ($self->is_method_excluded($method_name)) {
+            # it if it has one already
+            if ($class->has_method($method_name) &&
+                # and if they are not the same thing ...
+                $class->get_method($method_name)->body != $role->get_method($method_name)->body) {
+                next;
+            }
+            else {
+                # add it, although it could be overriden
+                $class->add_method(
+                    $method_name,
+                    $role->get_method($method_name)
+                );         
+            }
         }
         
         if ($self->is_method_aliased($method_name)) {
@@ -125,9 +162,9 @@ sub apply_methods {
             if ($class->has_method($aliased_method_name) &&
                 # and if they are not the same thing ...
                 $class->get_method($aliased_method_name)->body != $role->get_method($method_name)->body) {
-                confess "Cannot create a method alias if a local method of the same name exists";
+                $class->throw_error("Cannot create a method alias if a local method of the same name exists");
             }            
-            $class->alias_method(
+            $class->add_method(
                 $aliased_method_name,
                 $role->get_method($method_name)
             );                

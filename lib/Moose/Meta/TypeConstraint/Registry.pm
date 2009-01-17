@@ -6,9 +6,9 @@ use warnings;
 use metaclass;
 
 use Scalar::Util 'blessed';
-use Carp         'confess';
+use Carp         'confess'; # FIXME Moose->throw_error
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -33,7 +33,7 @@ sub new {
 
 sub has_type_constraint {
     my ($self, $type_name) = @_;
-    exists $self->type_constraints->{$type_name} ? 1 : 0
+    ($type_name and exists $self->type_constraints->{$type_name}) ? 1 : 0
 }
 
 sub get_type_constraint {

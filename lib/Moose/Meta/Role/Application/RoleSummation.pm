@@ -4,13 +4,11 @@ use strict;
 use warnings;
 use metaclass;
 
-use Carp            'confess';
 use Scalar::Util    'blessed';
-use Data::Dumper;
 
 use Moose::Meta::Role::Composite;
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -67,18 +65,25 @@ my $uniq = sub { my %h; map { $h{$_}++ == 0 ? $_ : () } @_ };
 sub check_role_exclusions {
     my ($self, $c) = @_;
 
-    my @all_excluded_roles = $uniq->(map {
-        $_->get_excluded_roles_list
-    } @{$c->get_roles});
+    my %excluded_roles;
+    for my $role (@{ $c->get_roles }) {
+        my $name = $role->name;
 
-    foreach my $role (@{$c->get_roles}) {
-        foreach my $excluded (@all_excluded_roles) {
-            confess "Conflict detected: " . $role->name . " excludes role '" . $excluded . "'"
-                if $role->does_role($excluded);
+        for my $excluded ($role->get_excluded_roles_list) {
+            push @{ $excluded_roles{$excluded} }, $name;
         }
     }
 
-    $c->add_excluded_roles(@all_excluded_roles);
+    foreach my $role (@{$c->get_roles}) {
+        foreach my $excluded (keys %excluded_roles) {
+            next unless $role->does_role($excluded);
+
+            my @excluding = @{ $excluded_roles{$excluded} };
+            Moose->throw_error(sprintf "Conflict detected: Role%s %s exclude%s role '%s'", (@excluding == 1 ? '' : 's'), join(', ', @excluding), (@excluding == 1 ? 's' : ''), $excluded);
+        }
+    }
+
+    $c->add_excluded_roles(keys %excluded_roles);
 }
 
 sub check_required_methods {
@@ -120,8 +125,8 @@ sub apply_attributes {
     my %seen;
     foreach my $attr (@all_attributes) {
         if (exists $seen{$attr->{name}}) {
-            confess "We have encountered an attribute conflict with '" . $attr->{name} . "' " 
-                  . "during composition. This is fatal error and cannot be disambiguated."
+            Moose->throw_error("We have encountered an attribute conflict with '" . $attr->{name} . "' " 
+                  . "during composition. This is fatal error and cannot be disambiguated.")
                 if $seen{$attr->{name}} != $attr->{attr};           
         }
         $seen{$attr->{name}} = $attr->{attr};
@@ -172,7 +177,7 @@ sub apply_methods {
         $method_map{$method->{name}} = $method->{method};
     }
 
-    $c->alias_method($_ => $method_map{$_}) for keys %method_map;
+    $c->add_method($_ => $method_map{$_}) for keys %method_map;
 }
 
 sub apply_override_method_modifiers {
@@ -190,14 +195,14 @@ sub apply_override_method_modifiers {
     
     my %seen;
     foreach my $override (@all_overrides) {
-        confess "Role '" . $c->name . "' has encountered an 'override' method conflict " .
+        Moose->throw_error( "Role '" . $c->name . "' has encountered an 'override' method conflict " .
                 "during composition (A local method of the same name as been found). This " .
-                "is fatal error."
+                "is fatal error." )
             if $c->has_method($override->{name});        
         if (exists $seen{$override->{name}}) {
-            confess "We have encountered an 'override' method conflict during " .
+            Moose->throw_error( "We have encountered an 'override' method conflict during " .
                     "composition (Two 'override' methods of the same name encountered). " .
-                    "This is fatal error."
+                    "This is fatal error.")
                 if $seen{$override->{name}} != $override->{method};                
         }
         $seen{$override->{name}} = $override->{method};

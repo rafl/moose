@@ -7,8 +7,8 @@ use Test::More;
 use Test::Exception;
 
 BEGIN {
-    unless ( eval 'use Test::Warn; 1' )  {
-        plan skip_all => 'These tests require Test::Warn';
+    unless ( eval 'use Test::Warn 0.10; 1' )  {
+        plan skip_all => 'These tests require Test::Warn 0.10';
     }
     else {
         plan tests => 40;
@@ -214,7 +214,7 @@ BEGIN {
 
     ::like(
         $@,
-        qr/\QCircular reference in also parameter to MooseX::Exporter between MooseX::CircularAlso and MooseX::CircularAlso/,
+        qr/\QCircular reference in also parameter to Moose::Exporter between MooseX::CircularAlso and MooseX::CircularAlso/,
         'got the expected error from circular reference in also'
     );
 }
@@ -235,7 +235,7 @@ BEGIN {
 
     ::like(
         $@,
-        qr/\QPackage in also (NoSuchThing) does not seem to use MooseX::Exporter/,
+        qr/\QPackage in also (NoSuchThing) does not seem to use Moose::Exporter/,
         'got the expected error from a reference in also to a package which does not use Moose::Exporter'
     );
 }

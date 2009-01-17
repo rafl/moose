@@ -5,10 +5,9 @@ use warnings;
 
 use Sub::Exporter;
 use Scalar::Util 'blessed';
-use Carp         'confess';
-use Class::MOP   0.56;
+use Class::MOP   0.60;
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -22,6 +21,7 @@ my @exports = qw[
     resolve_metatrait_alias
     resolve_metaclass_alias
     add_method_modifier
+    english_list
 ];
 
 Sub::Exporter::setup_exporter({
@@ -73,16 +73,9 @@ sub search_class_by_role {
 sub apply_all_roles {
     my $applicant = shift;
 
-    apply_all_roles_with_method( $applicant, 'apply', [@_] );
-}
+    Moose->throw_error("Must specify at least one role to apply to $applicant") unless @_;
 
-sub apply_all_roles_with_method {
-    my ( $applicant, $apply_method, $role_list ) = @_;
-
-    confess "Must specify at least one role to apply to $applicant"
-        unless @$role_list;
-
-    my $roles = Data::OptList::mkopt($role_list);
+    my $roles = Data::OptList::mkopt( [@_] );
 
     my $meta = ( blessed $applicant ? $applicant : find_meta($applicant) );
 
@@ -91,18 +84,17 @@ sub apply_all_roles_with_method {
     }
 
     ( $_->[0]->can('meta') && $_->[0]->meta->isa('Moose::Meta::Role') )
-        || confess "You can only consume roles, "
+        || Moose->throw_error("You can only consume roles, "
         . $_->[0]
-        . " is not a Moose role"
+        . " is not a Moose role")
         foreach @$roles;
 
     if ( scalar @$roles == 1 ) {
         my ( $role, $params ) = @{ $roles->[0] };
-        $role->meta->$apply_method( $meta,
-            ( defined $params ? %$params : () ) );
+        $role->meta->apply( $meta, ( defined $params ? %$params : () ) );
     }
     else {
-        Moose::Meta::Role->combine( @$roles )->$apply_method($meta);
+        Moose::Meta::Role->combine( @$roles )->apply($meta);
     }
 }
 
@@ -128,25 +120,35 @@ sub get_all_init_args {
 }
 
 sub resolve_metatrait_alias {
-    resolve_metaclass_alias( @_, trait => 1 );
+    return resolve_metaclass_alias( @_, trait => 1 );
 }
 
-sub resolve_metaclass_alias {
-    my ( $type, $metaclass_name, %options ) = @_;
+{
+    my %cache;
 
-    if ( my $resolved = eval {
-        my $possible_full_name = 'Moose::Meta::' . $type . '::Custom::' . ( $options{trait} ? "Trait::" : "" ) . $metaclass_name;
+    sub resolve_metaclass_alias {
+        my ( $type, $metaclass_name, %options ) = @_;
 
-        Class::MOP::load_class($possible_full_name);
+        my $cache_key = $type . q{ } . ( $options{trait} ? '-Trait' : '' );
+        return $cache{$cache_key}{$metaclass_name}
+            if $cache{$cache_key}{$metaclass_name};
 
-        $possible_full_name->can('register_implementation')
-            ? $possible_full_name->register_implementation
-            : $possible_full_name;
-    } ) {
-        return $resolved;
-    } else {
-        Class::MOP::load_class($metaclass_name);
-        return $metaclass_name;
+        my $possible_full_name
+            = 'Moose::Meta::' 
+            . $type
+            . '::Custom::'
+            . ( $options{trait} ? "Trait::" : "" )
+            . $metaclass_name;
+
+        my $loaded_class = Class::MOP::load_first_existing_class(
+            $possible_full_name,
+            $metaclass_name
+        );
+
+        return $cache{$cache_key}{$metaclass_name}
+            = $loaded_class->can('register_implementation')
+            ? $loaded_class->register_implementation
+            : $loaded_class;
     }
 }
 
@@ -167,6 +169,19 @@ sub add_method_modifier {
     else {
         $meta->$add_modifier_method( $_, $code ) for @{$args};
     }
+}
+
+sub english_list {
+    my @items = sort @_;
+
+    return $items[0] if @items == 1;
+    return "$items[0] and $items[1]" if @items == 2;
+
+    my $tail = pop @items;
+    my $list = join ', ', @items;
+    $list .= ', and ' . $tail;
+
+    return $list;
 }
 
 1;
@@ -229,13 +244,6 @@ actually used internally by both L<Moose> and L<Moose::Role>, and the
 C<@roles> will be pre-processed through L<Data::OptList::mkopt>
 to allow for the additional arguments to be passed. 
 
-=item B<apply_all_roles_with_method ($applicant, $method, @roles)>
-
-This function works just like C<apply_all_roles()>, except it allows
-you to specify what method will be called on the role metaclass when
-applying it to the C<$applicant>. This exists primarily so one can use
-the C<< Moose::Meta::Role->apply_to_metaclass_instance() >> method.
-
 =item B<get_all_attribute_values($meta, $instance)>
 
 Returns the values of the C<$instance>'s fields keyed by the attribute names.
@@ -259,6 +267,12 @@ Resolve a short name like in e.g.
 to a full class name.
 
 =item B<add_method_modifier ($class_or_obj, $modifier_name, $args)>
+
+=item B<english_list(@items)>
+
+Given a list of scalars, turns them into a proper list in English
+("one and two", "one, two, three, and four"). This is used to help us
+make nicer error messages.
 
 =back
 

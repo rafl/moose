@@ -4,10 +4,9 @@ use strict;
 use warnings;
 use metaclass;
 
-use Carp         'confess';
 use Scalar::Util 'blessed';
 
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 

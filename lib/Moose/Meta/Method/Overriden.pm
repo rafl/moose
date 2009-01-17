@@ -3,9 +3,7 @@ package Moose::Meta::Method::Overriden;
 use strict;
 use warnings;
 
-use Carp 'confess';
-
-our $VERSION   = '0.55_01';
+our $VERSION   = '0.64';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'cpan:STEVAN';
 
@@ -18,27 +16,28 @@ sub new {
     # it is really more like body's compilation stash
     # this is where we need to override the definition of super() so that the
     # body of the code can call the right overridden version
-    my $_super_package = $args{package} || $args{class}->name;
+    my $super_package = $args{package} || $args{class}->name;
 
     my $name = $args{name};
 
     my $super = $args{class}->find_next_method_by_name($name);
 
     (defined $super)
-        || confess "You cannot override '$name' because it has no super method";
+        || $class->throw_error("You cannot override '$name' because it has no super method", data => $name);
 
     my $super_body = $super->body;
 
     my $method = $args{method};
 
     my $body = sub {
+        local $Moose::SUPER_PACKAGE = $super_package;
         local @Moose::SUPER_ARGS = @_;
         local $Moose::SUPER_BODY = $super_body;
         return $method->(@_);
     };
 
     # FIXME do we need this make sure this works for next::method?
-    # subname "${_super_package}::${name}", $method;
+    # subname "${super_package}::${name}", $method;
 
     # FIXME store additional attrs
     $class->wrap(
